@@ -71,18 +71,58 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-#include "arduino_secrets.h"
-
-
 // ================================================================
-// WIFI / SUPABASE  (ค่าจริงอยู่ใน arduino_secrets.h)
+// WIFI / SUPABASE
 // ================================================================
+//
+// มี 2 ทางเลือก เลือกทางไหนก็ได้:
+//
+//   ทาง A (แนะนำ) - วางไฟล์ arduino_secrets.h ไว้โฟลเดอร์เดียวกับ .ino นี้
+//                   ก๊อปมาจาก arduino_secrets.example.h แล้วใส่ค่าจริง
+//                   ไฟล์นี้อยู่ใน .gitignore รหัส WiFi จึงไม่หลุดขึ้น GitHub
+//
+//   ทาง B         - ไม่ต้องมีไฟล์นั้นเลย แก้ค่าตรงบล็อกข้างล่างนี้ได้เลย
+//                   (ถ้าจะ commit โค้ดขึ้น GitHub อย่าลืมลบรหัสออกก่อน)
+//
+// ถ้ามีไฟล์ arduino_secrets.h อยู่ ค่าจากไฟล์นั้นจะถูกใช้เสมอ
+// ถ้าไม่มี ก็ยังคอมไพล์ผ่านโดยใช้ค่าที่กรอกไว้ข้างล่าง
+// ================================================================
+
+#if defined(__has_include)
+  #if __has_include("arduino_secrets.h")
+    #include "arduino_secrets.h"
+  #endif
+#endif
+
+// ---------- แก้ 2 บรรทัดนี้ ถ้าไม่ได้ใช้ arduino_secrets.h ----------
+#ifndef SECRET_WIFI_SSID
+  #define SECRET_WIFI_SSID      "ใส่ชื่อ WiFi ที่นี่"
+#endif
+
+#ifndef SECRET_WIFI_PASSWORD
+  #define SECRET_WIFI_PASSWORD  "ใส่รหัสผ่าน WiFi ที่นี่"
+#endif
+// -------------------------------------------------------------------
+
+// Supabase anon key ไม่ใช่ความลับ ถูกออกแบบมาให้ฝังในเบราว์เซอร์อยู่แล้ว
+// ความปลอดภัยจริงมาจาก RLS policy บน Supabase (anon สั่งงานเครื่องไม่ได้)
+#ifndef SECRET_SUPABASE_URL
+  #define SECRET_SUPABASE_URL "https://ufmwcstlzygrnmzkpgbs.supabase.co"
+#endif
+
+#ifndef SECRET_SUPABASE_ANON_KEY
+  #define SECRET_SUPABASE_ANON_KEY "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmbXdjc3Rsenlncm5temtwZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3NzgxOTgsImV4cCI6MjEwMzM1NDE5OH0.geNcAdB1YL2N9XozB49uyu-__N5KyRg4gKuj0ftOD1g"
+#endif
 
 const char* WIFI_SSID     = SECRET_WIFI_SSID;
 const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 
 const char* SUPABASE_URL      = SECRET_SUPABASE_URL;
 const char* SUPABASE_ANON_KEY = SECRET_SUPABASE_ANON_KEY;
+
+// ยังไม่ได้ใส่ค่า WiFi -> เตือนทาง Serial Monitor ตอนบูต
+// ไม่งั้นจะงงว่าทำไมต่อเน็ตไม่ติด ทั้งที่คอมไพล์ผ่านและอัปโหลดสำเร็จ
+const bool WIFI_NOT_CONFIGURED = (strcmp(WIFI_SSID, "ใส่ชื่อ WiFi ที่นี่") == 0);
 
 
 // ================================================================
@@ -208,6 +248,12 @@ void setup()
 
 void connectWifi()
 {
+  if (WIFI_NOT_CONFIGURED)
+  {
+    Serial.println(F("!! ยังไม่ได้ใส่ชื่อ/รหัส WiFi"));
+    Serial.println(F("!! แก้ที่ arduino_secrets.h หรือที่บล็อก SECRET_WIFI_* ด้านบนของไฟล์ .ino"));
+  }
+
   Serial.print(F("กำลังเชื่อมต่อ WiFi: "));
   Serial.println(WIFI_SSID);
 
