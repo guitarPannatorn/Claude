@@ -902,14 +902,20 @@ class Component extends DCLogic {
   }
   alarm() { if (this.state.sound) { this.beep(880, 0.18); setTimeout(() => this.beep(620, 0.18), 220); } }
 
-  // ชื่อ event ที่ Nano ส่งมา เช่น ok / ng_miss1 / ng_miss1_2 / auto_fail_miss2
-  // เลขที่ติดมาท้ายชื่อคือ ID ของสีที่ตรวจไม่พบ (คั่นกันไว้ทีละตัว)
+  // ชื่อ event ที่ Nano ส่งมา แบ่งได้ 3 กลุ่ม:
+  //   ผลตรวจชิ้นงาน : ok / ng / ng_miss1 / ng_miss1_2 / auto_fail_miss2
+  //   เหตุการณ์ระบบ : reset_ng / count_reset / total_reset / factory_reset / full_counter
+  //
+  // ต้องดูจาก "ขึ้นต้นด้วยอะไร" ไม่ใช่หาคำว่า ng ลอยๆ ในสตริง
+  // ไม่งั้น reset_ng (กด A0 เพื่อ "ล้าง" สถานะ NG) จะถูกนับเป็นของเสียอีกชิ้น
+  // ทั้งที่เป็นการเคลียร์ ไม่ใช่การตรวจเจอชิ้นงานเสีย
   parseEv(ev) {
     const s = String(ev || '').toLowerCase();
-    const ng = /ng|fail|lock|miss/.test(s);
+    const ng = /^(ng|auto_fail)/.test(s);
+    const ok = /^ok/.test(s);
     const m = s.match(/(\d+)/g);
     const ids = ng && m ? m.filter((n) => Number(n) >= 1 && Number(n) <= 4) : [];
-    return { ng: ng, ok: !ng && s.indexOf('ok') >= 0, ids: ids, auto: s.indexOf('auto_fail') >= 0, raw: s };
+    return { ng: ng, ok: ok, sys: !ng && !ok, ids: ids, auto: s.indexOf('auto_fail') >= 0, raw: s };
   }
   missingLabel(p) {
     if (!p.ng) return '—';
@@ -917,11 +923,23 @@ class Component extends DCLogic {
     if (!p.ids.length) return 'ไม่ระบุ';
     return p.ids.map((i) => 'สี ID ' + i).join(' + ');
   }
+  // ชื่อเหตุการณ์ระบบ ที่ไม่ใช่ผลตรวจชิ้นงาน
+  SYS_LABELS = {
+    reset_ng: 'กดปุ่ม A0 — เคลียร์สถานะ NG',
+    count_reset: 'กดปุ่ม A7 — ล้างตัวนับรอบนี้',
+    total_reset: 'สั่งจากเว็บ — ล้างยอดรวมสะสม',
+    factory_reset: 'สั่งจากเว็บ — คืนค่าทั้งหมด',
+    full_counter: 'นับครบตามเป้าล็อต',
+    none: 'ไม่มีเหตุการณ์',
+  };
   // แยกให้เห็นว่า NG มาจากการตรวจตอนกดปุ่ม หรือจากตัวจับเวลา 5 วินาที
   causeLabel(p) {
+    if (p.sys) return this.SYS_LABELS[p.raw] || 'เหตุการณ์ระบบ';
     if (!p.ng) return 'ผ่าน';
     return p.auto ? 'ครบ 5 วินาทีไม่พบสีครบ' : 'ตรวจแล้วสีไม่ครบ';
   }
+  // ป้ายผลของแต่ละแถว: NG / OK / ระบบ (เหตุการณ์ระบบไม่ใช่ทั้ง OK และ NG)
+  resultLabel(p) { return p.ng ? 'NG' : p.ok ? 'OK' : 'ระบบ'; }
 
   buckets() {
     const order = [], b = {};
@@ -1009,7 +1027,7 @@ class Component extends DCLogic {
     data.forEach((r, i) => {
       const p = this.parseEv(r.event);
       const thTime = new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' });
-      const row = [i + 1, r.id, thTime, p.ng ? 'NG' : 'OK',
+      const row = [i + 1, r.id, thTime, this.resultLabel(p),
         this.causeLabel(p), this.missingLabel(p), p.ids.join('|'), r.event];
       csv += row.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',') + '\n';
     });
@@ -1038,16 +1056,20 @@ class Component extends DCLogic {
       const isNew = st.newIds.indexOf(r.id) >= 0;
       return {
         id: r.id, time: new Date(r.created_at).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }),
-        isNg: pe.ng, title: pe.ng ? 'NG — ตรวจไม่พบสีครบ' : 'OK — ผ่านการตรวจสี',
+        isNg: pe.ng,
+        title: pe.ng ? 'NG — ตรวจไม่พบสีครบ' : pe.ok ? 'OK — ผ่านการตรวจสี' : this.causeLabel(pe),
         detail: pe.ng ? 'สีที่หายไป: ' + this.missingLabel(pe) + ' · event: ' + r.event : 'event: ' + r.event,
-        color: pe.ng ? '#b91c1c' : INK,
-        icon: pe.ng ? '✕' : '✓',
-        iconBg: pe.ng ? '#fee2e2' : '#dcfce7', iconFg: pe.ng ? RED : GREEN,
-        stamp: pe.ng ? 'NG' : 'OK', stampBg: pe.ng ? RED : GREEN, stampFg: '#fff',
-        bg: isNew ? (pe.ng ? '#fff5f5' : '#f3fdf8') : '#fff',
-        border: isNew ? (pe.ng ? '#fecaca' : '#bbf7d0') : '#eceff8',
+        color: pe.ng ? '#b91c1c' : pe.ok ? INK : MUTE,
+        icon: pe.ng ? '✕' : pe.ok ? '✓' : '↻',
+        iconBg: pe.ng ? '#fee2e2' : pe.ok ? '#dcfce7' : '#eef1f8',
+        iconFg: pe.ng ? RED : pe.ok ? GREEN : MUTE,
+        stamp: this.resultLabel(pe),
+        stampBg: pe.ng ? RED : pe.ok ? GREEN : '#9aa0b4', stampFg: '#fff',
+        bg: isNew ? (pe.ng ? '#fff5f5' : pe.ok ? '#f3fdf8' : '#f7f8fc') : '#fff',
+        border: isNew ? (pe.ng ? '#fecaca' : pe.ok ? '#bbf7d0' : '#e0e4f0') : '#eceff8',
+        // เหตุการณ์ระบบไม่ต้องมีชิป "ไม่ระบุ ID" เพราะไม่ได้ตรวจชิ้นงาน
         chips: pe.ids.length ? pe.ids.map((i) => ({ label: 'สี ID ' + i + ' หาย', bg: '#fef3c7', fg: '#92400e' }))
-          : [{ label: 'ไม่ระบุ ID', bg: '#f1f3fb', fg: '#5a6076' }],
+          : pe.ng ? [{ label: 'ไม่ระบุ ID', bg: '#f1f3fb', fg: '#5a6076' }] : [],
       };
     });
 
@@ -1062,10 +1084,12 @@ class Component extends DCLogic {
         time: new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' }),
         event: r.event, cause: this.causeLabel(pe),
         missing: this.missingLabel(pe), missColor: pe.ng ? '#b45309' : MUTE,
-        stamp: pe.ng ? 'NG' : 'OK', stampBg: pe.ng ? '#fee2e2' : '#dcfce7', stampFg: pe.ng ? '#b91c1c' : '#15803d',
-        ng: pe.ng, ids: pe.ids };
+        stamp: this.resultLabel(pe),
+        stampBg: pe.ng ? '#fee2e2' : pe.ok ? '#dcfce7' : '#eef1f8',
+        stampFg: pe.ng ? '#b91c1c' : pe.ok ? '#15803d' : '#5a6076',
+        ng: pe.ng, ok: pe.ok, ids: pe.ids };
     });
-    if (st.filter === 'ok') hist = hist.filter((r) => !r.ng);
+    if (st.filter === 'ok') hist = hist.filter((r) => r.ok);
     if (st.filter === 'ng') hist = hist.filter((r) => r.ng);
     if (st.filter === 'ng1') hist = hist.filter((r) => r.ids.indexOf('1') >= 0);
     if (st.filter === 'ng2') hist = hist.filter((r) => r.ids.indexOf('2') >= 0);
