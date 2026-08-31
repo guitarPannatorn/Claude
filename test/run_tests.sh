@@ -61,3 +61,27 @@ done
 echo "== รันเทสต์ ESP32: คิว event =="
 g++ -std=c++11 -I"$BUILD" -o "$BUILD/test_queue" "$BUILD/test_event_queue.cpp"
 "$BUILD/test_queue"
+
+# ---------------------------------------------------------------
+# เทสต์ตัวพักอัปโหลดตอนรีเซ็ตยอดรวม (กันบั๊กค่าเด้งกลับเป็นค่าเก่า)
+# ตัดเฉพาะส่วนนี้ออกมาจาก .ino จริงเหมือนกับคิว event ข้างบน
+# ---------------------------------------------------------------
+cp "$ROOT"/test/test_reset_suppression.cpp "$BUILD/"
+
+{
+  sed -n '/^bool suppressStatusUpload/,/^const unsigned long SUPPRESS_TIMEOUT_MS/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^void armResetSuppression()$/,/^}$/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^bool clearResetSuppressionIfConfirmed(const String& ev)$/,/^}$/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^bool shouldUploadStatusNow(unsigned long now)$/,/^}$/p' "$ESP_SKETCH"
+} > "$BUILD/esp32_suppression.cpp"
+
+for fn in armResetSuppression clearResetSuppressionIfConfirmed shouldUploadStatusNow; do
+  grep -q "$fn" "$BUILD/esp32_suppression.cpp" || { echo "ตัดโค้ด $fn จาก .ino ไม่สำเร็จ"; exit 1; }
+done
+
+echo "== รันเทสต์ ESP32: กันค่ายอดรวมเด้งกลับหลังรีเซ็ต =="
+g++ -std=c++11 -I"$BUILD" -o "$BUILD/test_suppress" "$BUILD/test_reset_suppression.cpp"
+"$BUILD/test_suppress"

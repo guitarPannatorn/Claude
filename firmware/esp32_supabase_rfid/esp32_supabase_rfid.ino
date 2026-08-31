@@ -199,6 +199,60 @@ const unsigned long UPLOAD_INTERVAL_MS = 2000;
 unsigned long lastCommandCheckTime = 0;
 const unsigned long COMMAND_CHECK_INTERVAL_MS = 2000;
 
+// ----------------------------------------------------------------
+// กันค่ายอดรวมเด้งกลับหลังกด "ล้างยอดรวม" / "คืนค่าทั้งหมด"
+//
+// บั๊กที่เกิด: ฟังก์ชัน SQL (reset_totals / factory_reset) ตั้ง
+// status.ok_total/ng_total = 0 ใน Supabase ทันทีตอนกดปุ่ม แต่ ESP32 ยัง
+// อัปโหลดสถานะของตัวเองเป็นระยะทุก UPLOAD_INTERVAL_MS อยู่ดี โดยใช้ค่า
+// ok/ng ล่าสุดที่ Nano รายงานมา ซึ่ง "ยังไม่รู้เรื่องคำสั่งรีเซ็ต" เพราะ
+// checkPendingCommands() เพิ่งจะไปดึงคำสั่งมาส่งต่อให้ Nano ในอีกไม่เกิน
+// COMMAND_CHECK_INTERVAL_MS ข้างหน้า ผลคือค่าที่เว็บเพิ่งตั้งเป็น 0
+// ถูกทับกลับเป็นค่าเก่าไปพักหนึ่ง ก่อนจะเด้งกลับมา 0 อีกทีตอน Nano
+// ประมวลผลคำสั่งเสร็จจริง (สร้างอาการ "รีเซ็ตแล้วค่ากลับไปเหมือนเดิม")
+//
+// แก้โดยพัก (suppress) การอัปโหลดสถานะทุกชนิดไว้ชั่วคราว นับตั้งแต่
+// วินาทีที่ส่งคำสั่ง RESET_TOTAL/FACTORY_RESET ไปให้ Nano จนกว่าจะเห็น
+// event "total_reset"/"factory_reset" ย้อนกลับมาจริง (หรือครบ timeout
+// กันค้างถ้า Nano ไม่ตอบด้วยเหตุใดก็ตาม)
+// ----------------------------------------------------------------
+bool suppressStatusUpload = false;
+unsigned long suppressStatusUploadSince = 0;
+const unsigned long SUPPRESS_TIMEOUT_MS = 4000;
+
+void armResetSuppression()
+{
+  suppressStatusUpload = true;
+  suppressStatusUploadSince = millis();
+}
+
+// Nano ยืนยันแล้วว่ารีเซ็ตยอดรวมจริง เลิกพักอัปโหลด
+// คืนค่า true ถ้า event นี้คือตัวยืนยันที่รอ (ให้ผู้เรียกรู้ว่าต้องอัปโหลดสถานะทันที)
+bool clearResetSuppressionIfConfirmed(const String& ev)
+{
+  if (ev == "total_reset" || ev == "factory_reset")
+  {
+    suppressStatusUpload = false;
+    return true;
+  }
+  return false;
+}
+
+// true = อัปโหลดสถานะรอบนี้ได้ (และรีเซ็ต timer/flag ที่เกี่ยวข้อง)
+// false = พักไว้ก่อน (มีคำสั่งรีเซ็ตยอดรวมค้างอยู่ รอ Nano ยืนยัน)
+bool shouldUploadStatusNow(unsigned long now)
+{
+  // ครบ timeout กันค้างแล้วแต่ Nano ยังไม่ตอบ -> เลิกพัก ปล่อยอัปโหลดตามปกติ
+  // ดีกว่าปล่อยให้ค้างไม่อัปเดตสถานะเลยถ้า Nano มีปัญหาจริงๆ
+  if (suppressStatusUpload && (now - suppressStatusUploadSince >= SUPPRESS_TIMEOUT_MS))
+  {
+    suppressStatusUpload = false;
+    Serial.println(F("พักอัปโหลดสถานะครบ timeout - Nano ไม่ตอบยืนยันรีเซ็ต ปล่อยอัปโหลดต่อ"));
+  }
+
+  return !suppressStatusUpload && (forceUploadNow || (now - lastUploadTime >= UPLOAD_INTERVAL_MS));
+}
+
 unsigned long lastWifiRetryTime = 0;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;
 
@@ -297,7 +351,7 @@ void loop()
 
   unsigned long now = millis();
 
-  if (forceUploadNow || (now - lastUploadTime >= UPLOAD_INTERVAL_MS))
+  if (shouldUploadStatusNow(now))
   {
     lastUploadTime = now;
     forceUploadNow = false;
@@ -480,6 +534,11 @@ void readFromNano()
         {
           pushEvent(ev);
           forceUploadNow = true;   // มี event จริง ต้องรีบส่งขึ้นเว็บ
+
+          // ถ้าเป็นตัวยืนยันรีเซ็ตยอดรวม เลิกพักอัปโหลด ปล่อยค่า 0 ที่ถูกต้อง
+          // ขึ้น Supabase ได้เลย (forceUploadNow ตั้งไว้แล้วข้างบน จึงอัปโหลด
+          // โดยไม่ต้องรอรอบถัดไป)
+          clearResetSuppressionIfConfirmed(ev);
         }
       }
 
@@ -702,11 +761,16 @@ void checkPendingCommands()
         {
           Serial2.print("RESET_TOTAL\n");
           Serial.println(F("-> Nano: RESET_TOTAL (ล้างยอดรวมสะสม OK/NG)"));
+
+          // พักอัปโหลดสถานะไว้ก่อน กันค่าเก่าทับค่า 0 ที่เว็บเพิ่งตั้งใน Supabase
+          armResetSuppression();
         }
         else if (strcmp(cmd, "FACTORY_RESET") == 0)
         {
           Serial2.print("FACTORY_RESET\n");
           Serial.println(F("-> Nano: FACTORY_RESET (คืนค่าทั้งหมด)"));
+
+          armResetSuppression();
         }
         else if (strcmp(cmd, "SET") == 0)
         {
