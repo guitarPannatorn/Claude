@@ -585,7 +585,7 @@ void runColorCheck()
   if (!huskylens.request())
   {
     Serial.println(F("HUSKYLENS ERROR"));
-    setResultNG();
+    setResultNG(false, false, false);
     return;
   }
 
@@ -616,7 +616,7 @@ void runColorCheck()
     Serial.print(F(" | ID2 = "));
     Serial.println(found2);
 
-    setResultNG();
+    setResultNG(found1, found2, true);
   }
 }
 
@@ -637,7 +637,24 @@ void setResultOK()
   triggerCountFromD11();
 }
 
-void setResultNG()
+// ประกอบชื่อ event ให้บอกด้วยว่าสี ID ไหนหายไป
+// เว็บอ่านเลขที่ติดอยู่ในชื่อ event เพื่อไปแสดงว่า "สี ID x หาย"
+// ต้องคั่นเลขแต่ละตัวไว้ ("miss1_2" ไม่ใช่ "miss12")
+// ไม่งั้นเว็บจะอ่านได้เป็นเลข 12 แล้วมองว่าไม่ใช่ ID ที่รู้จัก
+String ngEventName(const char* prefix, bool found1, bool found2)
+{
+  String ev = prefix;
+
+  if (!found1 && !found2) ev += "_miss1_2";
+  else if (!found1)       ev += "_miss1";
+  else if (!found2)       ev += "_miss2";
+
+  return ev;
+}
+
+// idsKnown = false ใช้กับกรณีที่อ่านกล้องไม่สำเร็จ ซึ่งไม่รู้ว่าสีไหนหาย
+// จึงส่งแค่ "ng" เฉยๆ ไม่เดาว่าหายทั้งสองสี
+void setResultNG(bool found1, bool found2, bool idsKnown)
 {
   digitalWrite(LED_OK, LOW);
   ledOkOn = false;
@@ -648,9 +665,11 @@ void setResultNG()
 
   countNgTotal++;
   totalsDirty = true;
-  lastEventMsg = "ng";
+  lastEventMsg = idsKnown ? ngEventName("ng", found1, found2) : String("ng");
 
-  Serial.println(F("NG detected - รอ 500ms ก่อนเปิด D12"));
+  Serial.print(F("NG detected ("));
+  Serial.print(lastEventMsg);
+  Serial.println(F(") - รอ 500ms ก่อนเปิด D12"));
 }
 
 
@@ -872,7 +891,7 @@ void handleAutoAssessment(bool found1, bool found2, unsigned long now)
 
     countNgTotal++;
     totalsDirty = true;
-    lastEventMsg = "auto_fail";
+    lastEventMsg = ngEventName("auto_fail", found1, found2);
 
     Serial.println(F("AUTO: FAIL เกิน 5 วินาที - ระบบ LOCK ต้องกด A0"));
   }

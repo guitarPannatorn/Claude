@@ -36,12 +36,27 @@ struct String {
   size_t length() const { return s.size(); }
   bool startsWith(const char* p) const { return s.rfind(p, 0) == 0; }
   String substring(int i) const { return String(s.substr(i).c_str()); }
+  String substring(int from, int to) const {
+    if (from < 0 || (size_t)from > s.size() || to < from) return String("");
+    return String(s.substr(from, to - from).c_str());
+  }
+  int indexOf(const char* needle) const {
+    size_t k = s.find(needle);
+    return k == std::string::npos ? -1 : (int)k;
+  }
+  int indexOf(char c, int from) const {
+    size_t k = s.find(c, from);
+    return k == std::string::npos ? -1 : (int)k;
+  }
   int toInt() const { return atoi(s.c_str()); }
   const char* c_str() const { return s.c_str(); }
   String& operator+=(char c) { s += c; return *this; }
   String& operator+=(const char* c) { s += c; return *this; }
   String& operator=(const char* c) { s = c; return *this; }
   bool operator==(const char* c) const { return s == c; }
+  bool operator==(const String& o) const { return s == o.s; }
+  bool operator!=(const char* c) const { return !(s == c); }
+  bool operator!=(const String& o) const { return s != o.s; }
 };
 inline String operator+(const String& a, const String& b) { return String((a.s + b.s).c_str()); }
 

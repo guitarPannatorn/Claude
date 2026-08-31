@@ -130,6 +130,24 @@ bool haveNewData = false;
 // จึงบังคับอัปโหลดทันทีเมื่อบรรทัดที่รับมามี event ที่ไม่ใช่ "none"
 bool forceUploadNow = false;
 
+// ----------------------------------------------------------------
+// คิว event ที่ยังไม่ได้บันทึกลง event_log
+//
+// ทำไมต้องมีคิว: readFromNano() อ่านทุกบรรทัดที่ค้างอยู่ใน buffer รวดเดียว
+// แต่เก็บไว้ได้แค่บรรทัดล่าสุดบรรทัดเดียว (latestJson) ระหว่างที่ HTTP POST
+// ทำงานอยู่ (บล็อกเป็นร้อย ms) Nano ยังส่งมาเรื่อยๆ หลายบรรทัดจึงมากอง
+// รอพร้อมกัน พอวนอ่านครั้งถัดไปบรรทัดที่มี event จริงจะถูกบรรทัดหลังทับหมด
+// และบรรทัดสุดท้ายมักเป็น event "none" เพราะ Nano ล้างค่าทุกครั้งหลังส่ง
+// ผลคือชิ้นงานที่เทสไปหลายสิบชิ้นเหลือลง event_log แค่ไม่กี่แถว
+//
+// แก้โดยดึง event ออกจาก "ทุกบรรทัด" ที่อ่านได้ แล้วพักไว้ในคิว
+// ค่อยยิงลง Supabase ให้ครบทุกตัวตอนอัปโหลดรอบถัดไป
+// ----------------------------------------------------------------
+#define EVENT_QUEUE_SIZE 16
+String eventQueue[EVENT_QUEUE_SIZE];
+uint8_t eventQueueHead  = 0;
+uint8_t eventQueueCount = 0;
+
 
 // ================================================================
 // TIMING
@@ -363,6 +381,36 @@ void ensureWifiConnected()
 // อ่านข้อมูล JSON จาก Nano
 // ================================================================
 
+// เข้าคิว event ไว้รออัปโหลด
+void pushEvent(const String& ev)
+{
+  if (eventQueueCount >= EVENT_QUEUE_SIZE)
+  {
+    // คิวเต็ม (เน็ตล่มนาน) ทิ้งตัวเก่าสุดเพื่อให้ของใหม่เข้ามาได้
+    eventQueueHead = (eventQueueHead + 1) % EVENT_QUEUE_SIZE;
+    eventQueueCount--;
+
+    Serial.println(F("คิว event เต็ม - ทิ้งตัวเก่าสุด"));
+  }
+
+  eventQueue[(eventQueueHead + eventQueueCount) % EVENT_QUEUE_SIZE] = ev;
+  eventQueueCount++;
+}
+
+// ดึงค่าของคีย์ "event" ออกจากบรรทัด JSON โดยไม่ต้อง parse ทั้งก้อน
+// (ทำแบบเบาๆ เพราะเรียกทุกบรรทัดที่รับเข้ามา)
+String extractEvent(const String& json)
+{
+  int k = json.indexOf("\"event\":\"");
+  if (k < 0) return String("");
+
+  int start = k + 9;                      // ความยาวของ "event":"
+  int end   = json.indexOf('"', start);
+  if (end < 0) return String("");
+
+  return json.substring(start, end);
+}
+
 void readFromNano()
 {
   while (Serial2.available())
@@ -378,11 +426,14 @@ void readFromNano()
         latestJson = rxBuffer;
         haveNewData = true;
 
-        // บรรทัดนี้มี event สำคัญ (ok / ng / auto_fail / total_reset /
-        // factory_reset ฯลฯ) ต้องอัปโหลดทันที ไม่งั้นจะถูกบรรทัดถัดไปทับหาย
-        if (latestJson.indexOf("\"event\":\"none\"") < 0)
+        // เก็บ event ของ "ทุกบรรทัด" ไว้ในคิว ไม่ใช่แค่บรรทัดล่าสุด
+        // (ok / ng_miss1 / auto_fail_miss2 / total_reset / factory_reset ฯลฯ)
+        String ev = extractEvent(latestJson);
+
+        if (ev.length() > 0 && ev != "none")
         {
-          forceUploadNow = true;
+          pushEvent(ev);
+          forceUploadNow = true;   // มี event จริง ต้องรีบส่งขึ้นเว็บ
         }
       }
 
@@ -451,7 +502,17 @@ void uploadStatusToSupabase()
   body["ok_total"]     = doc["ok"];
   body["ng_total"]     = doc["ng"];
   body["rate"]         = doc["rate"];
-  body["event"]        = doc["event"].as<const char*>();
+
+  // บรรทัดล่าสุดมัก event = "none" (Nano ล้างค่าทุกครั้งหลังส่ง)
+  // ถ้ามี event จริงค้างคิวอยู่ ให้เอาตัวล่าสุดขึ้นไปแสดงบนแดชบอร์ดแทน
+  if (eventQueueCount > 0)
+  {
+    body["event"] = eventQueue[(eventQueueHead + eventQueueCount - 1) % EVENT_QUEUE_SIZE];
+  }
+  else
+  {
+    body["event"] = doc["event"].as<const char*>();
+  }
 
   String bodyStr;
   serializeJson(body, bodyStr);
@@ -483,14 +544,27 @@ void uploadStatusToSupabase()
 
   http.end();
 
-  const char* eventStr = doc["event"].as<const char*>();
-
-  if (eventStr != nullptr && strcmp(eventStr, "none") != 0)
-  {
-    logEventToSupabase(eventStr);
-  }
+  // บันทึกให้ครบทุก event ที่ค้างคิวอยู่ ไม่ใช่แค่ตัวที่ติดมากับบรรทัดล่าสุด
+  drainEventQueue();
 
   haveNewData = false;
+}
+
+
+// บันทึก event ที่ค้างคิวลง event_log ให้ครบทุกตัว
+// ตัวไหนส่งไม่สำเร็จ (เน็ตหลุด) ให้คาไว้ในคิวเพื่อลองใหม่รอบหน้า
+void drainEventQueue()
+{
+  while (eventQueueCount > 0)
+  {
+    if (!logEventToSupabase(eventQueue[eventQueueHead].c_str()))
+    {
+      break;
+    }
+
+    eventQueueHead = (eventQueueHead + 1) % EVENT_QUEUE_SIZE;
+    eventQueueCount--;
+  }
 }
 
 
@@ -498,7 +572,7 @@ void uploadStatusToSupabase()
 // บันทึก event ลง Supabase
 // ================================================================
 
-void logEventToSupabase(const char* eventStr)
+bool logEventToSupabase(const char* eventStr)
 {
   StaticJsonDocument<128> body;
   body["event"] = eventStr;
@@ -517,14 +591,19 @@ void logEventToSupabase(const char* eventStr)
   http.addHeader("Prefer", "return=minimal");
 
   int httpCode = http.POST(bodyStr);
+  bool ok = (httpCode > 0 && httpCode < 300);
 
-  if (httpCode <= 0 || httpCode >= 300)
+  if (!ok)
   {
     Serial.print(F("บันทึก event_log ล้มเหลว code="));
-    Serial.println(httpCode);
+    Serial.print(httpCode);
+    Serial.print(F(" event="));
+    Serial.println(eventStr);
   }
 
   http.end();
+
+  return ok;
 }
 
 

@@ -67,6 +67,25 @@ int main() {
   check("ไม่ล็อกเป็น NG ตลอดกระบวนการ", !autoFailLock);
   check("ยอด NG = 0", countNgTotal == 0);
 
+  std::cout << "\n=== สถานการณ์ที่ 6: ชื่อ event ต้องบอกได้ว่าสี ID ไหนหายไป ===\n";
+  // เว็บอ่านเลขที่ติดมากับชื่อ event ไปแสดงว่า "สี ID x หาย"
+  // เลขแต่ละตัวต้องคั่นกัน ไม่งั้น "miss12" จะถูกอ่านเป็นเลข 12
+  check("ไม่เจอ ID2 -> ng_miss2", ngEventName("ng", true, false) == String("ng_miss2"));
+  check("ไม่เจอ ID1 -> ng_miss1", ngEventName("ng", false, true) == String("ng_miss1"));
+  check("ไม่เจอทั้งคู่ -> ng_miss1_2", ngEventName("ng", false, false) == String("ng_miss1_2"));
+  check("เจอครบ -> ไม่ต่อท้ายเลข", ngEventName("ng", true, true) == String("ng"));
+  check("auto fail ใช้ชื่อเดียวกันได้", ngEventName("auto_fail", true, false) == String("auto_fail_miss2"));
+
+  std::cout << "\n=== สถานการณ์ที่ 7: auto fail ส่ง event ที่มี ID ที่หายไป ===\n";
+  resetState(); countNgTotal = 0; lastEventMsg = "none";
+  feed(true, false, 6000);     // เห็นแต่ ID1 ค้าง -> ID2 คือตัวที่หาย
+  check("ล็อกเป็น NG แล้ว", autoFailLock);
+  check("event บอกว่า ID2 หาย", lastEventMsg == String("auto_fail_miss2"));
+
+  resetState(); countNgTotal = 0; lastEventMsg = "none";
+  feed(false, true, 6000);     // เห็นแต่ ID2 ค้าง -> ID1 คือตัวที่หาย
+  check("event บอกว่า ID1 หาย", lastEventMsg == String("auto_fail_miss1"));
+
   std::cout << (fails ? "\n>>> มีข้อที่ไม่ผ่าน: " : "\n>>> ผ่านทั้งหมด ") << fails << "\n\n";
   return fails ? 1 : 0;
 }

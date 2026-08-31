@@ -32,6 +32,32 @@ echo "== ตรวจ syntax ทั้งไฟล์ =="
 g++ -std=c++11 -I"$BUILD" -fsyntax-only -Wall -Wextra -Wno-unused-parameter \
     -include Arduino.h -include EEPROM.h -x c++ "$BUILD/sketch.cpp" 2>&1 || true
 
-echo "== รันเทสต์ =="
+echo "== รันเทสต์ Nano: Auto Assessment + ชื่อ event =="
 g++ -std=c++11 -I"$BUILD" -o "$BUILD/test" "$BUILD/test_auto_assessment.cpp"
 "$BUILD/test"
+
+# ---------------------------------------------------------------
+# เทสต์คิว event ของ ESP32
+# ตัดเฉพาะส่วนคิวออกมาจาก .ino จริง (ตั้งแต่ #define EVENT_QUEUE_SIZE
+# ถึงท้าย drainEventQueue) แล้วคอมไพล์กับ stub เพื่อไม่ต้องมีไลบรารี ESP32
+# ---------------------------------------------------------------
+ESP_SKETCH="$ROOT/firmware/esp32_supabase_rfid/esp32_supabase_rfid.ino"
+cp "$ROOT"/test/test_event_queue.cpp "$BUILD/"
+
+{
+  sed -n '/^#define EVENT_QUEUE_SIZE/,/^uint8_t eventQueueCount/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^void pushEvent(const String& ev)$/,/^}$/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^String extractEvent(const String& json)$/,/^}$/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^void drainEventQueue()$/,/^}$/p' "$ESP_SKETCH"
+} > "$BUILD/esp32_queue.cpp"
+
+for fn in pushEvent extractEvent drainEventQueue; do
+  grep -q "$fn" "$BUILD/esp32_queue.cpp" || { echo "ตัดโค้ด $fn จาก .ino ไม่สำเร็จ"; exit 1; }
+done
+
+echo "== รันเทสต์ ESP32: คิว event =="
+g++ -std=c++11 -I"$BUILD" -o "$BUILD/test_queue" "$BUILD/test_event_queue.cpp"
+"$BUILD/test_queue"

@@ -633,16 +633,16 @@ a{color:#4f6bf6;text-decoration:none}a:hover{color:#3a54d6}
         </div>
 
         <div style="background:#fff;border:1px solid #eceff8;border-radius:20px;overflow:hidden;box-shadow:0 6px 18px rgba(28,32,51,.05)">
-          <div style="display:grid;grid-template-columns:76px 70px 165px 1fr 130px 92px;gap:12px;padding:14px 18px;background:#f8f9fe;font:600 11.5px/1 'IBM Plex Sans Thai',sans-serif;color:#5a6076">
-            <div>ลำดับ</div><div>ID</div><div>เวลา</div><div>Event</div><div>สีที่หาย</div><div>ผล</div>
+          <div style="display:grid;grid-template-columns:70px 150px 1fr 145px 165px 82px;gap:12px;padding:14px 18px;background:#f8f9fe;font:600 11.5px/1 'IBM Plex Sans Thai',sans-serif;color:#5a6076">
+            <div>ลำดับ</div><div>เวลา</div><div>สาเหตุ</div><div>สีที่หาย</div><div>Event</div><div>ผล</div>
           </div>
           <sc-for list="{{ histRows }}" as="r" hint-placeholder-count="10">
-            <div style="display:grid;grid-template-columns:76px 70px 165px 1fr 130px 92px;gap:12px;align-items:center;min-height:54px;padding:8px 18px;border-top:1px solid #f1f3fb;font:400 13px/1.4 'IBM Plex Sans Thai',sans-serif;transition:background .15s ease" style-hover="background:#f8f9fe">
-              <div style="font:700 12px/1 Archivo,sans-serif;color:#4a4f68;font-variant-numeric:tabular-nums">#{{ r.seq }}</div>
-              <div style="font:600 12px/1 Archivo,sans-serif;color:#6c7286">{{ r.id }}</div>
+            <div style="display:grid;grid-template-columns:70px 150px 1fr 145px 165px 82px;gap:12px;align-items:center;min-height:54px;padding:8px 18px;border-top:1px solid #f1f3fb;font:400 13px/1.4 'IBM Plex Sans Thai',sans-serif;transition:background .15s ease" style-hover="background:#f8f9fe">
+              <div style="font:700 12.5px/1 Archivo,sans-serif;color:#4a4f68;font-variant-numeric:tabular-nums">#{{ r.seq }}</div>
               <div style="font-variant-numeric:tabular-nums">{{ r.time }}</div>
-              <div style="font:600 13px/1.3 Archivo,sans-serif;color:#4a4f68">{{ r.event }}</div>
+              <div style="color:#4a4f68">{{ r.cause }}</div>
               <div style="color:{{ r.missColor }};font-weight:600">{{ r.missing }}</div>
+              <div style="font:600 12px/1.3 Archivo,sans-serif;color:#8b90a3">{{ r.event }}</div>
               <div style="height:28px;padding:0 12px;border-radius:999px;background:{{ r.stampBg }};color:{{ r.stampFg }};font:700 11px/28px Archivo,sans-serif;justify-self:start">{{ r.stamp }}</div>
             </div>
           </sc-for>
@@ -902,17 +902,25 @@ class Component extends DCLogic {
   }
   alarm() { if (this.state.sound) { this.beep(880, 0.18); setTimeout(() => this.beep(620, 0.18), 220); } }
 
+  // ชื่อ event ที่ Nano ส่งมา เช่น ok / ng_miss1 / ng_miss1_2 / auto_fail_miss2
+  // เลขที่ติดมาท้ายชื่อคือ ID ของสีที่ตรวจไม่พบ (คั่นกันไว้ทีละตัว)
   parseEv(ev) {
     const s = String(ev || '').toLowerCase();
     const ng = /ng|fail|lock|miss/.test(s);
     const m = s.match(/(\d+)/g);
     const ids = ng && m ? m.filter((n) => Number(n) >= 1 && Number(n) <= 4) : [];
-    return { ng: ng, ok: !ng && s.indexOf('ok') >= 0, ids: ids, raw: s };
+    return { ng: ng, ok: !ng && s.indexOf('ok') >= 0, ids: ids, auto: s.indexOf('auto_fail') >= 0, raw: s };
   }
   missingLabel(p) {
     if (!p.ng) return '—';
-    if (!p.ids.length) return 'ไม่ระบุ ID';
-    return p.ids.map((i) => 'ID ' + i).join(' + ');
+    // ไม่มีเลขติดมา = เฟิร์มแวร์รุ่นเก่า หรือตอนนั้นกล้องอ่านค่าไม่ได้เลย
+    if (!p.ids.length) return 'ไม่ระบุ';
+    return p.ids.map((i) => 'สี ID ' + i).join(' + ');
+  }
+  // แยกให้เห็นว่า NG มาจากการตรวจตอนกดปุ่ม หรือจากตัวจับเวลา 5 วินาที
+  causeLabel(p) {
+    if (!p.ng) return 'ผ่าน';
+    return p.auto ? 'ครบ 5 วินาทีไม่พบสีครบ' : 'ตรวจแล้วสีไม่ครบ';
   }
 
   buckets() {
@@ -997,11 +1005,12 @@ class Component extends DCLogic {
     const { data, error } = await this.sb.from('event_log').select('*').order('created_at', { ascending: true }).limit(20000);
     if (error || !data) { this.setState({ cmdMsg: 'ดึงข้อมูลไม่สำเร็จ' }); return; }
     // Excel เปิด UTF-8 ตรงๆ แล้วภาษาไทยเพี้ยน ต้องใส่ BOM นำหน้าให้ Excel รู้ว่าเป็น UTF-8
-    let csv = '﻿ลำดับชิ้นงาน,id,เวลา,event,ผล,รหัสสีที่หาย\n';
+    let csv = '﻿ลำดับชิ้นงาน,id,เวลา,ผล,สาเหตุ,สีที่หาย,รหัสสีที่หาย,event\n';
     data.forEach((r, i) => {
       const p = this.parseEv(r.event);
       const thTime = new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' });
-      const row = [i + 1, r.id, thTime, r.event, p.ng ? 'NG' : 'OK', p.ids.join('|')];
+      const row = [i + 1, r.id, thTime, p.ng ? 'NG' : 'OK',
+        this.causeLabel(p), this.missingLabel(p), p.ids.join('|'), r.event];
       csv += row.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',') + '\n';
     });
     const a = document.createElement('a');
@@ -1050,7 +1059,8 @@ class Component extends DCLogic {
     let hist = histSrc.map((r) => {
       const pe = this.parseEv(r.event);
       return { id: r.id, seq: histSeq[r.id],
-        time: new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' }), event: r.event,
+        time: new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' }),
+        event: r.event, cause: this.causeLabel(pe),
         missing: this.missingLabel(pe), missColor: pe.ng ? '#b45309' : MUTE,
         stamp: pe.ng ? 'NG' : 'OK', stampBg: pe.ng ? '#fee2e2' : '#dcfce7', stampFg: pe.ng ? '#b91c1c' : '#15803d',
         ng: pe.ng, ids: pe.ids };
