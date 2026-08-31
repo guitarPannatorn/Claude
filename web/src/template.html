@@ -744,6 +744,28 @@ a{color:#4f6bf6;text-decoration:none}a:hover{color:#3a54d6}
   </div>
 </div>
 </sc-if>
+<sc-if value="{{ confirmOn }}" hint-placeholder-val="{{ false }}">
+  <div sc-camel-on-click="{{ confirmCancel }}" style="position:fixed;inset:0;z-index:200;background:rgba(20,24,40,.46);backdrop-filter:blur(3px);display:grid;place-items:center;padding:20px;animation:viewIn .18s ease both">
+    <div style="width:min(460px,100%);background:#fff;border-radius:22px;padding:28px;box-shadow:0 30px 80px rgba(28,32,51,.28);animation:cardIn .28s cubic-bezier(.2,.8,.2,1) both">
+      <div style="display:flex;align-items:center;gap:13px;margin-bottom:16px">
+        <div style="width:44px;height:44px;border-radius:14px;background:#fee2e2;color:#b91c1c;display:grid;place-items:center;font:700 20px/1 Archivo,sans-serif;flex:none">!</div>
+        <div style="font:700 18px/1.35 'IBM Plex Sans Thai',sans-serif;color:#1c2033">{{ confirmTitle }}</div>
+      </div>
+      <div style="display:grid;gap:9px;margin-bottom:18px">
+        <sc-for list="{{ confirmLines }}" as="ln" hint-placeholder-count="3">
+          <div style="display:flex;gap:10px;align-items:flex-start;font:400 14px/1.55 'IBM Plex Sans Thai',sans-serif;color:#4a5064">
+            <span style="color:#4f6bf6;font-weight:700;line-height:1.55">•</span><span>{{ ln.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:13px;padding:11px 14px;font:500 13px/1.5 'IBM Plex Sans Thai',sans-serif;color:#9a3412;margin-bottom:22px">{{ confirmNote }}</div>
+      <div style="display:flex;gap:11px;justify-content:flex-end">
+        <button sc-camel-on-click="{{ confirmCancel }}" style="min-height:46px;padding:0 20px;border:1.5px solid #e4e7f2;border-radius:13px;background:#fff;color:#4a5064;font:600 13.5px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="background:#f6f7fc;border-color:#cfd5ee">ยกเลิก</button>
+        <button sc-camel-on-click="{{ confirmAccept }}" style="min-height:46px;padding:0 20px;border:none;border-radius:13px;background:#b91c1c;color:#fff;font:600 13.5px/1 'IBM Plex Sans Thai',sans-serif;cursor:pointer" style-hover="background:#991b1b">{{ confirmOkLabel }}</button>
+      </div>
+    </div>
+  </div>
+</sc-if>
 </x-dc>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;showSparklines&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Display&quot;}}">
 const SUPABASE_URL = 'https://ufmwcstlzygrnmzkpgbs.supabase.co';
@@ -757,6 +779,7 @@ class Component extends DCLogic {
     view: 'live', tv: false, status: null, events: [], lastConn: 0, lockStart: null,
     lockSecs: 0, downSecs: 0, sound: true, pin: '', settingInput: '', cmdMsg: '',
     q: '', filter: 'all', page: 0, flashKey: 0, newIds: [], userEmail: '',
+    confirmOn: false, confirmTitle: '', confirmLines: [], confirmOkLabel: '', confirmNote: '',
     disp: { ok: 0, ng: 0, yld: 0, rate: 0, down: 0, counting: 0 },
   };
   targets = { ok: 0, ng: 0, yld: 0, rate: 0, down: 0, counting: 0 };
@@ -916,12 +939,34 @@ class Component extends DCLogic {
     this.setState({ cmdMsg: 'ไม่ได้รับการยืนยันใน 6 วินาที — ตรวจสอบ ESP32 / WiFi' });
   }
 
+  // กล่องยืนยันในแอป ใช้แทน window.confirm() ของเบราว์เซอร์
+  // ที่ขึ้นหัวว่า "stunning-speculoos-0a330b.netlify.app says" ซึ่งหลุดจากดีไซน์
+  askConfirm(opt) {
+    if (this.state.pin !== '1234') { this.setState({ cmdMsg: 'ใส่ PIN ก่อนสั่งงาน' }); return; }
+    this.pendingAction = opt.onOk;
+    this.setState({
+      confirmOn: true,
+      confirmTitle: opt.title,
+      confirmLines: (opt.lines || []).map((t, i) => ({ key: i, text: t })),
+      confirmOkLabel: opt.okLabel,
+      confirmNote: opt.note || '',
+    });
+  }
+
+  closeConfirm() { this.pendingAction = null; this.setState({ confirmOn: false }); }
+
+  acceptConfirm() {
+    const fn = this.pendingAction;
+    this.pendingAction = null;
+    this.setState({ confirmOn: false });
+    if (fn) fn();
+  }
+
   // เรียก SQL function บน Supabase (reset_totals / factory_reset)
   // ต่างจาก cmd() ตรงที่ฟังก์ชันเป็นคนแทรกแถวใน commands ให้เอง แล้วคืน id กลับมา
   // เราจึงเอา id นั้นไปเฝ้าดู processed ต่อ เพื่อยืนยันว่าเครื่องรับคำสั่งแล้วจริง
-  async rpcCmd(fn, args, label, confirmMsg) {
+  async rpcCmd(fn, args, label) {
     if (this.state.pin !== '1234') { this.setState({ cmdMsg: 'PIN ไม่ถูกต้อง' }); return; }
-    if (confirmMsg && !window.confirm(confirmMsg)) { this.setState({ cmdMsg: 'ยกเลิกแล้ว' }); return; }
     this.setState({ cmdMsg: 'กำลังส่งคำสั่ง ' + label + '…' });
     const { data: id, error } = await this.sb.rpc(fn, args);
     if (error) { this.setState({ cmdMsg: 'ส่งคำสั่งไม่สำเร็จ: ' + error.message }); return; }
@@ -1149,10 +1194,31 @@ class Component extends DCLogic {
       sendSetting: () => { const v = parseInt(st.settingInput, 10); if (!isNaN(v)) this.cmd('SET', v, 'ตั้งค่า Setting'); },
       resetNg: () => this.cmd('RESET', undefined, 'เคลียร์ NG/LOCK'),
       resetCount: () => this.cmd('RESET_COUNT', undefined, 'เคลียร์ Counting'),
-      resetTotal: () => this.rpcCmd('reset_totals', {}, 'ล้างยอดรวมสะสม',
-        'ล้างยอดรวมสะสม OK/NG ทั้งหมด?\n\nยอดที่เก็บใน EEPROM ของ Nano จะถูกล้างด้วย และกู้คืนไม่ได้\n(Setting กับ Counting ของรอบปัจจุบันไม่ถูกแตะ)'),
-      factoryReset: () => this.rpcCmd('factory_reset', { p_clear_log: true }, 'คืนค่าทั้งหมด',
-        'คืนค่าทั้งหมดกลับค่าเริ่มต้น?\n\n• ยอดรวม OK/NG = 0\n• Counting = 0, Setting = 10\n• ปลดสถานะ NG / LOCK ทั้งหมด\n• ล้างประวัติผลการเทสทิ้งทั้งหมด\n\nกู้คืนไม่ได้'),
+      resetTotal: () => this.askConfirm({
+        title: 'ล้างยอดรวมสะสม OK/NG?',
+        lines: ['ยอดรวมบนเว็บและใน EEPROM ของ Nano จะถูกล้างเป็น 0',
+                'Setting กับ Counting ของรอบปัจจุบันไม่ถูกแตะ'],
+        note: 'ล้างแล้วกู้คืนไม่ได้',
+        okLabel: 'ล้างยอดรวม',
+        onOk: () => this.rpcCmd('reset_totals', {}, 'ล้างยอดรวมสะสม'),
+      }),
+      factoryReset: () => this.askConfirm({
+        title: 'คืนค่าทั้งหมดกลับค่าเริ่มต้น?',
+        lines: ['ยอดรวม OK / NG = 0',
+                'Counting = 0 และ Setting = 10',
+                'ปลดสถานะ NG / LOCK ทั้งหมด',
+                'ล้างประวัติผลการเทสทิ้งทั้งหมด'],
+        note: 'ทำแล้วกู้คืนไม่ได้',
+        okLabel: 'คืนค่าทั้งหมด',
+        onOk: () => this.rpcCmd('factory_reset', { p_clear_log: true }, 'คืนค่าทั้งหมด'),
+      }),
+      confirmOn: st.confirmOn,
+      confirmTitle: st.confirmTitle,
+      confirmLines: st.confirmLines,
+      confirmOkLabel: st.confirmOkLabel,
+      confirmNote: st.confirmNote,
+      confirmAccept: () => this.acceptConfirm(),
+      confirmCancel: () => this.closeConfirm(),
       cmdMsg: st.cmdMsg,
       sound: st.sound, toggleSound: () => this.setState({ sound: !st.sound }),
     };
