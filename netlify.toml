@@ -1,0 +1,21 @@
+# ===================================================================
+# ตั้งค่าการ deploy บน Netlify
+# ===================================================================
+# publish = "web" หมายถึงเอาเฉพาะโฟลเดอร์ web/ ขึ้นเว็บ
+# เว็บจึงเสิร์ฟ web/index.html ที่ URL หลัก และไม่เอาซอร์สโค้ด
+# เฟิร์มแวร์กับไฟล์ SQL ขึ้นเว็บสาธารณะไปด้วย
+#
+# ไม่มี build command เพราะเป็น static HTML ล้วน ไม่ต้องคอมไพล์อะไร
+# ===================================================================
+
+[build]
+  publish = "web"
+
+# กัน search engine ไม่ให้เก็บ index หน้าแผงควบคุมเครื่องจักร
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

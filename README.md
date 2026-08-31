@@ -13,7 +13,7 @@ HuskyLens ──I2C/Serial──> Arduino Nano ──Serial 9600──> ESP32 �
 | `firmware/Nano_Pro/` | เฟิร์มแวร์ Arduino Nano — ตรวจสี, นับ, LCD, EEPROM |
 | `firmware/esp32_supabase_rfid/` | เฟิร์มแวร์ ESP32 — WiFi, Supabase, RFID |
 | `sql/` | SQL function สำหรับปุ่มรีเซ็ตบนเว็บ |
-| `web/control.html` | หน้าเว็บควบคุมเครื่อง (ใช้ได้เลย หรือก๊อปโค้ดไปใส่เว็บเดิม) |
+| `web/` | หน้าเว็บควบคุมเครื่อง — Netlify deploy โฟลเดอร์นี้ขึ้นเว็บ |
 | `test/` | เทสต์ตรรกะ Auto Assessment รันบน PC ได้โดยไม่ต้องมีบอร์ด |
 
 ---
@@ -119,7 +119,8 @@ cp arduino_secrets.example.h arduino_secrets.h
 
 มี 2 ทางเลือก
 
-**ทาง A — ใช้หน้าใหม่ทั้งหน้า** เปิด `web/control.html` ได้ตรงๆ หรือ deploy ขึ้น hosting
+**ทาง A — ใช้หน้าใหม่ทั้งหน้า** `web/index.html` คือหน้าที่ Netlify เสิร์ฟอยู่ตอนนี้
+แก้ไฟล์นี้แล้ว push เว็บจะอัปเดตเอง
 
 **ทาง B — แปะปุ่มเข้าเว็บเดิม** ก๊อป `web/snippet-reset-buttons.html` ทั้งไฟล์
 ไปวางใน `index.html` ของเว็บเดิม ตรงก่อนปิด `</body>`
@@ -170,67 +171,30 @@ await supabase.from('commands').insert({ cmd: 'SET', value: 20 });
 
 ---
 
-## หมายเหตุเรื่องการ deploy บน Netlify
+## การ deploy บน Netlify
 
-เว็บที่ใช้อยู่ (`stunning-speculoos-0a330b.netlify.app`) ตอนนี้เป็นแบบ **manual drop deploy**
-คือลากไฟล์ไปวางใน Netlify ไม่ได้ต่อกับ Git repo (`deploy_source: "drop"`, ไม่มี `commit_ref`)
-และทั้งเว็บมีไฟล์เดียวคือ `index.html`
+เว็บ `stunning-speculoos-0a330b.netlify.app` ต่อกับ repo นี้แล้ว
 
-ผลที่ตามมา:
-
-- **push โค้ดขึ้น repo นี้ ไม่ได้ทำให้เว็บอัปเดต** ต้องอัปโหลดไฟล์ใหม่เข้า Netlify เองทุกครั้ง
-- **`index.html` ตัวจริงมีอยู่ที่เดียวคือบน Netlify** ไม่มีสำเนาสำรองใน repo
-  ถ้าลบ deploy ทิ้งหรือ drop ทับด้วยไฟล์ผิด งานที่แก้มาทั้งหมดหายทันที
-
-**แนะนำให้ทำ** — เอา `index.html` ตัวปัจจุบันมาใส่ใน repo นี้ แล้วต่อ Netlify กับ GitHub
-(Netlify → Project configuration → Build & deploy → Link repository)
-หลังจากนั้นทุกครั้งที่ push เว็บจะ deploy ให้อัตโนมัติ และมีประวัติย้อนกลับได้
-
----
-
-## รันเทสต์
-
-```bash
-bash test/run_tests.sh
-```
-
-คอมไพล์ `.ino` ด้วย g++ บน PC โดยใช้ stub header จำลองไลบรารี Arduino
-และ `millis()` ปลอมที่ควบคุมเวลาได้เอง จึงจำลองเหตุการณ์ 15 วินาทีได้ในเสี้ยววินาที
-
-ครอบคลุม 5 สถานการณ์ (13 assertion):
-
-| สถานการณ์ | ต้องได้ |
+| รายการ | ค่า |
 |---|---|
-| เห็นสีเดียวแวบเดียว แล้วหยิบชิ้นงานออก | **ไม่ขึ้น NG** ← โค้ดเดิม fail ข้อนี้ |
-| ของเสียจริง วางค้างหน้ากล้อง 6 วิ | ขึ้น NG ตามเดิม |
-| ชิ้นงานดี เห็นครบ 2 สีทัน | ไม่ขึ้น NG |
-| ของเสียค้างอยู่ แต่ภาพกระพริบหาย 300ms | ยังขึ้น NG (grace period ทำงาน) |
-| ชิ้นงานทยอยเข้าเฟรม ID1 มาก่อน ID2 | ไม่ขึ้น NG |
+| Repo | `guitarPannatorn/Claude` |
+| Branch ที่ deploy เป็น production | `claude/data-retrieval-question-e517au` |
+| Publish directory | `web/` (ตั้งใน `netlify.toml`) |
+| Build command | ไม่มี — เป็น static HTML ล้วน |
 
----
+**push ขึ้น branch นี้ = เว็บอัปเดตอัตโนมัติ** ไม่ต้องลากไฟล์เข้า Netlify อีกแล้ว
 
-## เรื่องที่ยังไม่ได้แก้
+`netlify.toml` ตั้ง `publish = "web"` ไว้ เพื่อให้เอาขึ้นเว็บเฉพาะโฟลเดอร์ `web/`
+ถ้าไม่ตั้ง Netlify จะเอา **ทั้ง repo** ขึ้นเว็บ ทำให้ซอร์สเฟิร์มแวร์และไฟล์ SQL
+ถูกเปิดให้ดาวน์โหลดจากอินเทอร์เน็ตได้ และที่สำคัญคือไม่มี `index.html` ที่ root
+เว็บหลักจะขึ้น 404
 
-เจอจากการตรวจโค้ด แต่อยู่นอกขอบเขตรอบนี้ เรียงตามความสำคัญ
+### กู้หน้าเว็บเดิมกลับมา
 
-1. **A6 / A7 ไม่มี internal pull-up** — บน ATmega328P ขา A6/A7 เป็น analog-only
-   ไม่มีวงจร digital และไม่มี pull-up ภายใน (จึง `pinMode(A6, INPUT_PULLUP)` ไม่ได้)
-   ถ้าไม่ต่อ **R 10kΩ ขึ้น 5V จากภายนอก** ขาจะลอย `analogRead()` อ่านค่ามั่ว
-   → ยอดนับเพิ่มเอง / Counting รีเซ็ตเองแบบสุ่ม **เป็นงานฮาร์ดแวร์ ไม่ใช่โค้ด**
+หน้า `index.html` เดิมที่เคย drop ไว้ ยังอยู่ในประวัติ deploy ของ Netlify
+(deploy id `6a93de38af6a039d8798dab2` วันที่ 30 ส.ค. 07:39)
+เข้า Netlify → Deploys → เลือก deploy นั้น → **Preview** เพื่อดู
+หรือ **Publish deploy** เพื่อย้อนกลับไปใช้เวอร์ชันนั้น
 
-2. **`runColorCheck()` ตีความกล้องอ่านไม่ได้เป็น NG** — บรรทัด `if (!huskylens.request()) setResultNG();`
-   กดปุ่ม START ตอนกล้องตอบไม่ทัน = NG ทั้งที่ชิ้นงานถูกต้อง ควรแยกเป็นสถานะ "CAM ERROR" และให้กดใหม่
-
-3. **SoftwareSerial 2 ตัวแย่งกันทำงาน** — `espSerial.listen()` ถูกเรียกทุกรอบ loop และการส่ง JSON
-   ปิด interrupt ~145ms ทุก 500 มิลลิวินาที (~30% ของเวลา) ทางแก้ที่ดีที่สุดคือ
-   **ย้าย HuskyLens ไปใช้ I2C** (`huskylens.begin(Wire)` + ตั้งโหมดที่ตัวกล้อง) แล้วเหลือ SoftwareSerial ตัวเดียว
-
-4. **`String` บน Nano** — `espRxBuffer` / `lastEventMsg` ทำให้ heap แตกกระจายบน SRAM 2KB
-   ควรเปลี่ยนเป็น `char[]`
-
-5. **WiFi หลุด = ข้อมูลหายถาวร** — ESP32 ไม่มีคิวเก็บข้อมูลไว้ส่งย้อนหลัง
-   ยอดสะสมไม่กระทบ (เป็นค่าสะสม เดี๋ยวก็ตามทัน) แต่ event ที่เกิดช่วงนั้นหายเลย
-
-6. **D9 falling edge นับเป็น OK เสมอ** — ทุกครั้งที่เห็นครบ 2 สีแล้วหายไป 400ms จะนับเพิ่ม
-   โดยไม่สนว่ากด START หรือยัง ทำให้ `countOkTotal` ไม่ตรงกับจำนวนครั้งที่กดตรวจ
-   (ถ้าตั้งใจให้เป็น auto-count ก็ถูกแล้ว)
+ถ้าอยากเอาเนื้อหาบางส่วนของหน้าเดิมมารวมกับหน้าใหม่ ให้ก๊อป HTML จากหน้า preview
+มาใส่ `web/index.html` แล้ว push
