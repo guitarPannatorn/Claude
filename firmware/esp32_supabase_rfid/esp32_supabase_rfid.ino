@@ -220,19 +220,61 @@ bool suppressStatusUpload = false;
 unsigned long suppressStatusUploadSince = 0;
 const unsigned long SUPPRESS_TIMEOUT_MS = 4000;
 
-void armResetSuppression()
+// ----------------------------------------------------------------
+// ส่งคำสั่งรีเซ็ตซ้ำจนกว่า Nano จะยืนยัน
+//
+// Nano มี SoftwareSerial 2 ตัว (ต่อกล้อง HuskyLens กับต่อ ESP32) ไลบรารีนี้
+// "ฟัง" ได้ทีละตัวเท่านั้น สลับไปมาตามจังหวะงานของ Nano เอง ถ้า "RESET_TOTAL\n"
+// ที่ ESP32 ส่งมาครั้งเดียวดันมาถึงตอน Nano กำลังฟังฝั่งกล้องอยู่พอดี ไบต์
+// พวกนั้นจะหายไปเงียบๆ ไม่มีใครรู้ - Nano ไม่เคยได้รับคำสั่งเลย ยอดจึงไม่ถูก
+// รีเซ็ตจริง แล้วพอครบ timeout ของ suppressStatusUpload ก็จะกลับไปอัปโหลด
+// ค่าเดิม (ที่ไม่เคยเปลี่ยน) กลายเป็นอาการ "รีเซ็ตแล้วค่ากลับไปเหมือนเดิม" ถาวร
+//
+// แก้โดยส่งคำสั่งซ้ำเป็นระยะจนกว่าจะเห็น Nano ยืนยันกลับมาจริง เพิ่มโอกาส
+// ที่อย่างน้อยหนึ่งครั้งจะไปถึงตอน Nano ฟังฝั่ง ESP32 อยู่พอดี
+// (doTotalReset()/doFactoryReset() ทำซ้ำได้โดยไม่มีผลข้างเคียง เพราะแค่ตั้ง
+// ค่าเป็น 0/ค่าเริ่มต้นทุกครั้ง ไม่ได้บวกเพิ่มหรือสะสมอะไร)
+// ----------------------------------------------------------------
+String pendingResetCmd = "";              // "" = ไม่มีคำสั่งรีเซ็ตค้างอยู่
+unsigned long lastResetRetrySentTime = 0;
+const unsigned long RESET_RETRY_INTERVAL_MS = 400;
+
+void armResetSuppression(const char* cmdLine)
 {
+  pendingResetCmd = cmdLine;
   suppressStatusUpload = true;
   suppressStatusUploadSince = millis();
+  lastResetRetrySentTime = millis();
+
+  Serial2.print(cmdLine);
 }
 
-// Nano ยืนยันแล้วว่ารีเซ็ตยอดรวมจริง เลิกพักอัปโหลด
+// เรียกทุกรอบ loop() - ส่งซ้ำเป็นระยะถ้ายังไม่เห็น Nano ยืนยัน
+void retryPendingResetIfNeeded(unsigned long now)
+{
+  if (pendingResetCmd.length() == 0) return;
+
+  if (!suppressStatusUpload)
+  {
+    pendingResetCmd = "";   // ยืนยันแล้ว หรือ timeout ไปแล้ว เลิกส่งซ้ำ
+    return;
+  }
+
+  if (now - lastResetRetrySentTime < RESET_RETRY_INTERVAL_MS) return;
+
+  lastResetRetrySentTime = now;
+  Serial2.print(pendingResetCmd);
+  Serial.println(F("-> ส่งคำสั่งรีเซ็ตซ้ำ (ยังไม่เห็น Nano ยืนยันกลับมา)"));
+}
+
+// Nano ยืนยันแล้วว่ารีเซ็ตยอดรวมจริง เลิกพักอัปโหลด เลิกส่งซ้ำ
 // คืนค่า true ถ้า event นี้คือตัวยืนยันที่รอ (ให้ผู้เรียกรู้ว่าต้องอัปโหลดสถานะทันที)
 bool clearResetSuppressionIfConfirmed(const String& ev)
 {
   if (ev == "total_reset" || ev == "factory_reset")
   {
     suppressStatusUpload = false;
+    pendingResetCmd = "";
     return true;
   }
   return false;
@@ -350,6 +392,8 @@ void loop()
   handleRfidScan();   // อ่านบัตร RFID
 
   unsigned long now = millis();
+
+  retryPendingResetIfNeeded(now);
 
   if (shouldUploadStatusNow(now))
   {
@@ -759,18 +803,18 @@ void checkPendingCommands()
         }
         else if (strcmp(cmd, "RESET_TOTAL") == 0)
         {
-          Serial2.print("RESET_TOTAL\n");
           Serial.println(F("-> Nano: RESET_TOTAL (ล้างยอดรวมสะสม OK/NG)"));
 
-          // พักอัปโหลดสถานะไว้ก่อน กันค่าเก่าทับค่า 0 ที่เว็บเพิ่งตั้งใน Supabase
-          armResetSuppression();
+          // ส่งคำสั่ง + พักอัปโหลดสถานะไว้ก่อน กันค่าเก่าทับค่า 0 ที่เว็บ
+          // เพิ่งตั้งใน Supabase แล้วส่งซ้ำเป็นระยะจนกว่า Nano จะยืนยัน
+          // (กันกรณี SoftwareSerial ชนกับฝั่งกล้อง แล้วครั้งแรกหลุดหายไป)
+          armResetSuppression("RESET_TOTAL\n");
         }
         else if (strcmp(cmd, "FACTORY_RESET") == 0)
         {
-          Serial2.print("FACTORY_RESET\n");
           Serial.println(F("-> Nano: FACTORY_RESET (คืนค่าทั้งหมด)"));
 
-          armResetSuppression();
+          armResetSuppression("FACTORY_RESET\n");
         }
         else if (strcmp(cmd, "SET") == 0)
         {

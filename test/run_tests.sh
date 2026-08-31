@@ -71,14 +71,18 @@ cp "$ROOT"/test/test_reset_suppression.cpp "$BUILD/"
 {
   sed -n '/^bool suppressStatusUpload/,/^const unsigned long SUPPRESS_TIMEOUT_MS/p' "$ESP_SKETCH"
   echo
-  sed -n '/^void armResetSuppression()$/,/^}$/p' "$ESP_SKETCH"
+  sed -n '/^String pendingResetCmd/,/^const unsigned long RESET_RETRY_INTERVAL_MS/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^void armResetSuppression(const char\* cmdLine)$/,/^}$/p' "$ESP_SKETCH"
+  echo
+  sed -n '/^void retryPendingResetIfNeeded(unsigned long now)$/,/^}$/p' "$ESP_SKETCH"
   echo
   sed -n '/^bool clearResetSuppressionIfConfirmed(const String& ev)$/,/^}$/p' "$ESP_SKETCH"
   echo
   sed -n '/^bool shouldUploadStatusNow(unsigned long now)$/,/^}$/p' "$ESP_SKETCH"
 } > "$BUILD/esp32_suppression.cpp"
 
-for fn in armResetSuppression clearResetSuppressionIfConfirmed shouldUploadStatusNow; do
+for fn in armResetSuppression retryPendingResetIfNeeded clearResetSuppressionIfConfirmed shouldUploadStatusNow; do
   grep -q "$fn" "$BUILD/esp32_suppression.cpp" || { echo "ตัดโค้ด $fn จาก .ino ไม่สำเร็จ"; exit 1; }
 done
 
