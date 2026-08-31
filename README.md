@@ -13,7 +13,9 @@ HuskyLens ──I2C/Serial──> Arduino Nano ──Serial 9600──> ESP32 �
 | `firmware/Nano_Pro/` | เฟิร์มแวร์ Arduino Nano — ตรวจสี, นับ, LCD, EEPROM |
 | `firmware/esp32_supabase_rfid/` | เฟิร์มแวร์ ESP32 — WiFi, Supabase, RFID |
 | `sql/` | SQL function สำหรับปุ่มรีเซ็ตบนเว็บ |
-| `web/` | หน้าเว็บควบคุมเครื่อง — Netlify deploy โฟลเดอร์นี้ขึ้นเว็บ |
+| `web/` | หน้าเว็บ — Netlify deploy โฟลเดอร์นี้ขึ้นเว็บ |
+| `web/src/` | ซอร์สที่แก้ไขได้ของหน้าเว็บ (แก้ที่นี่ ไม่ใช่ที่ `index.html`) |
+| `tools/` | `repack.py` ประกอบ `web/index.html` ใหม่จากซอร์ส |
 | `test/` | เทสต์ตรรกะ Auto Assessment รันบน PC ได้โดยไม่ต้องมีบอร์ด |
 
 ---
@@ -117,33 +119,46 @@ cp arduino_secrets.example.h arduino_secrets.h
 
 ### 4) หน้าเว็บ
 
-มี 2 ทางเลือก
+| ไฟล์ | คืออะไร |
+|---|---|
+| `web/index.html` | **หน้าจริงที่ Netlify เสิร์ฟ** — แดชบอร์ดเดิมของโปรเจกต์ + ปุ่มใหม่ |
+| `web/src/template.html` | **ซอร์สที่ต้องแก้** — HTML + โค้ด React ของหน้าเว็บ |
+| `web/simple-panel.html` | แผงควบคุมสำรองแบบเรียบๆ ไฟล์เดียว ไม่พึ่ง bundle |
 
-**ทาง A — ใช้หน้าใหม่ทั้งหน้า** `web/index.html` คือหน้าที่ Netlify เสิร์ฟอยู่ตอนนี้
-แก้ไฟล์นี้แล้ว push เว็บจะอัปเดตเอง
+#### ⚠️ ห้ามแก้ `web/index.html` ตรงๆ
 
-**ทาง B — แปะปุ่มเข้าเว็บเดิม** ก๊อป `web/snippet-reset-buttons.html` ทั้งไฟล์
-ไปวางใน `index.html` ของเว็บเดิม ตรงก่อนปิด `</body>`
-บล็อกนี้ห่อไว้ใน IIFE ไม่ประกาศตัวแปร global และ id/class ขึ้นต้นด้วย `ci-` ทั้งหมด
-จึงไม่ชนกับโค้ดเดิม ถ้าหน้าเว็บโหลด supabase-js ไว้แล้วจะใช้ตัวเดิม ไม่โหลดซ้ำ
+ไฟล์นั้นถูก bundle มาจาก Claude Design Canvas ขนาด 560KB ข้างในมี React,
+supabase-js และฟอนต์ woff2 ถูก gzip + base64 ยัดรวมเป็นไฟล์เดียว
+โค้ดแอปจริงอยู่ในบล็อก `<script type="__bundler/template">` ซึ่งเป็นสตริง JSON ก้อนเดียว
 
-ทั้งสองทางต้องล็อกอินด้วยบัญชี Supabase Auth ก่อน เพราะ RLS ให้เฉพาะ `authenticated`
-เขียนตาราง `commands` ได้ (ดูหัวข้อ "ข้อควรรู้เรื่องสิทธิ์" ด้านล่าง)
+**ขั้นตอนแก้หน้าเว็บ**
 
-ถ้าจะเขียนเองก็ใช้แค่นี้:
+```bash
+# 1. แก้ซอร์ส
+vim web/src/template.html
 
-```js
-// ปุ่ม "Reset ยอดรวม"
-const { error } = await supabase.rpc('reset_totals');
+# 2. ประกอบ bundle ใหม่ (ตรวจ JS syntax + round-trip JSON ให้อัตโนมัติ)
+python3 tools/repack.py
 
-// ปุ่ม "คืนค่าทั้งหมด"
-const { error } = await supabase.rpc('factory_reset', { p_clear_log: true });
-
-// ปุ่มสั่งงานทั่วไป (ของเดิม)
-await supabase.from('commands').insert({ cmd: 'RESET' });
-await supabase.from('commands').insert({ cmd: 'RESET_COUNT' });
-await supabase.from('commands').insert({ cmd: 'SET', value: 20 });
+# 3. push -> Netlify deploy เอง
+git add -A && git commit -m "..." && git push
 ```
+
+#### ปุ่มที่เพิ่มเข้าไปในแดชบอร์ดเดิม
+
+อยู่ในแถวเดียวกับ `ตั้งค่า` / `เคลียร์ NG/LOCK` / `เคลียร์ Counting` ที่การ์ด Yield Trend
+
+| ปุ่ม | เรียกอะไร |
+|---|---|
+| **ล้างยอดรวมสะสม** (ม่วง) | `rpc('reset_totals')` |
+| **คืนค่าทั้งหมด** (แดงเข้ม) | `rpc('factory_reset', { p_clear_log: true })` |
+
+ทั้งสองปุ่มใช้กลไกเดิมของหน้าเว็บทุกอย่าง — ต้องใส่ **PIN `1234`** ก่อน,
+มี `confirm()` ยืนยันก่อนทำงาน, แล้วเฝ้าดู `commands.processed` 6 วินาที
+เพื่อยืนยันว่าเครื่องรับคำสั่งจริง (เมธอด `rpcCmd()` ใน `template.html`)
+
+ต่างจากปุ่มเดิมตรงที่ปุ่มเดิม `insert` แถวเข้า `commands` เอง
+ส่วนปุ่มใหม่เรียก SQL function ซึ่งเป็นคนแทรกแถวให้แล้วคืน `id` กลับมา
 
 ---
 
