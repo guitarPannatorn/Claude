@@ -81,7 +81,14 @@ begin
      and id <> v_id;
 
   if p_clear_log then
-    delete from public.event_log;
+    -- ต้องมี WHERE เสมอ แม้จะตั้งใจลบทั้งตาราง
+    -- Supabase preload ส่วนขยาย safeupdate ให้ role authenticated/anon ไว้
+    -- (session_preload_libraries = 'safeupdate') ซึ่งบล็อก DELETE/UPDATE
+    -- ที่ไม่มี WHERE เพื่อกันอุบัติเหตุลบข้อมูลทั้งตาราง
+    -- SECURITY DEFINER เปลี่ยนแค่สิทธิ์ ไม่ได้ปิดการ์ดตัวนี้
+    -- id เป็น bigint identity จึงไม่มีทางเป็น null -> เงื่อนไขนี้ครอบคลุมทุกแถว
+    delete from public.event_log
+     where id is not null;
 
     -- เก็บกวาดคำสั่งเก่าที่ประมวลผลไปแล้วด้วย ไม่ให้ตารางบวมเรื่อยๆ
     delete from public.commands
