@@ -633,11 +633,12 @@ a{color:#4f6bf6;text-decoration:none}a:hover{color:#3a54d6}
         </div>
 
         <div style="background:#fff;border:1px solid #eceff8;border-radius:20px;overflow:hidden;box-shadow:0 6px 18px rgba(28,32,51,.05)">
-          <div style="display:grid;grid-template-columns:70px 165px 1fr 130px 92px;gap:12px;padding:14px 18px;background:#f8f9fe;font:600 11.5px/1 'IBM Plex Sans Thai',sans-serif;color:#5a6076">
-            <div>ID</div><div>เวลา</div><div>Event</div><div>สีที่หาย</div><div>ผล</div>
+          <div style="display:grid;grid-template-columns:76px 70px 165px 1fr 130px 92px;gap:12px;padding:14px 18px;background:#f8f9fe;font:600 11.5px/1 'IBM Plex Sans Thai',sans-serif;color:#5a6076">
+            <div>ลำดับ</div><div>ID</div><div>เวลา</div><div>Event</div><div>สีที่หาย</div><div>ผล</div>
           </div>
           <sc-for list="{{ histRows }}" as="r" hint-placeholder-count="10">
-            <div style="display:grid;grid-template-columns:70px 165px 1fr 130px 92px;gap:12px;align-items:center;min-height:54px;padding:8px 18px;border-top:1px solid #f1f3fb;font:400 13px/1.4 'IBM Plex Sans Thai',sans-serif;transition:background .15s ease" style-hover="background:#f8f9fe">
+            <div style="display:grid;grid-template-columns:76px 70px 165px 1fr 130px 92px;gap:12px;align-items:center;min-height:54px;padding:8px 18px;border-top:1px solid #f1f3fb;font:400 13px/1.4 'IBM Plex Sans Thai',sans-serif;transition:background .15s ease" style-hover="background:#f8f9fe">
+              <div style="font:700 12px/1 Archivo,sans-serif;color:#4a4f68;font-variant-numeric:tabular-nums">#{{ r.seq }}</div>
               <div style="font:600 12px/1 Archivo,sans-serif;color:#6c7286">{{ r.id }}</div>
               <div style="font-variant-numeric:tabular-nums">{{ r.time }}</div>
               <div style="font:600 13px/1.3 Archivo,sans-serif;color:#4a4f68">{{ r.event }}</div>
@@ -775,7 +776,7 @@ const INK = '#1c2033', MUTE = '#6c7286';
 class Component extends DCLogic {
   state = {
     ready: false, authed: false, email: '', pw: '', err: '', busy: false,
-    view: 'live', tv: false, status: null, events: [], lastConn: 0, lockStart: null,
+    view: 'live', tv: false, status: null, events: [], historyEvents: [], lastConn: 0, lockStart: null,
     lockSecs: 0, downSecs: 0, sound: true, pin: '', settingInput: '', cmdMsg: '',
     q: '', filter: 'all', page: 0, flashKey: 0, newIds: [], userEmail: '',
     confirmOn: false, confirmTitle: '', confirmLines: [], confirmOkLabel: '',
@@ -814,18 +815,26 @@ class Component extends DCLogic {
     this.setState({ authed: true, userEmail: email || '' });
     await this.loadStatus();
     await this.loadEvents();
+    await this.loadHistory();
     this.subscribe();
-    this.poll = setInterval(() => { this.loadStatus(); this.loadEvents(); }, 60000);
+    this.poll = setInterval(() => { this.loadStatus(); this.loadEvents(); this.loadHistory(); }, 60000);
   }
 
   async loadStatus() {
     const { data, error } = await this.sb.from('status').select('*').eq('id', 1).single();
     if (!error && data) this.applyStatus(data);
   }
+  // ใช้ทำแดชบอร์ดสด / รายงานรายชั่วโมง / สรุปล็อต ซึ่งตั้งใจดูย้อนหลังแค่ 12 ชั่วโมง
   async loadEvents() {
     const since = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
     const { data, error } = await this.sb.from('event_log').select('*').gte('created_at', since).order('created_at', { ascending: false }).limit(1000);
     if (!error && data) this.setState({ events: data });
+  }
+  // ใช้ทำหน้า "ประวัติ" กับ Export — ต้องเห็นย้อนหลังได้ไม่จำกัดแค่ 12 ชั่วโมง
+  // ไม่งั้นชิ้นงานที่เทสไปนานกว่านั้นจะหายไปจากหน้าประวัติทั้งที่ยังอยู่ใน Supabase
+  async loadHistory() {
+    const { data, error } = await this.sb.from('event_log').select('*').order('created_at', { ascending: false }).limit(5000);
+    if (!error && data) this.setState({ historyEvents: data });
   }
 
   subscribe() {
@@ -833,6 +842,7 @@ class Component extends DCLogic {
     this.sb.channel('log-changes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_log' }, (p) => {
       this.setState((s) => ({
         events: [p.new].concat(s.events).slice(0, 1000),
+        historyEvents: [p.new].concat(s.historyEvents).slice(0, 5000),
         flashKey: s.flashKey + 1,
         newIds: [p.new.id].concat(s.newIds).slice(0, 3),
       }));
@@ -982,16 +992,21 @@ class Component extends DCLogic {
   }
 
   async exportCsv() {
-    const { data, error } = await this.sb.from('event_log').select('*').order('created_at', { ascending: false }).limit(2000);
+    // เรียงเก่า→ใหม่ตั้งแต่ query เลย เพื่อให้ลำดับชิ้นงานตรงกับลำดับที่เทสจริง (ชิ้นแรก = 1)
+    // limit สูงกว่าที่ใช้แสดงในหน้าเว็บ เผื่อกรณีข้อมูลสะสมมาก จะได้ไม่ตกหล่นตอน export
+    const { data, error } = await this.sb.from('event_log').select('*').order('created_at', { ascending: true }).limit(20000);
     if (error || !data) { this.setState({ cmdMsg: 'ดึงข้อมูลไม่สำเร็จ' }); return; }
-    let csv = 'id,event,result,missing_color_id,created_at\n';
-    data.forEach((r) => {
+    // Excel เปิด UTF-8 ตรงๆ แล้วภาษาไทยเพี้ยน ต้องใส่ BOM นำหน้าให้ Excel รู้ว่าเป็น UTF-8
+    let csv = '﻿ลำดับชิ้นงาน,id,เวลา,event,ผล,รหัสสีที่หาย\n';
+    data.forEach((r, i) => {
       const p = this.parseEv(r.event);
-      csv += [r.id, r.event, p.ng ? 'NG' : 'OK', p.ids.join('|'), r.created_at].join(',') + '\n';
+      const thTime = new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' });
+      const row = [i + 1, r.id, thTime, r.event, p.ng ? 'NG' : 'OK', p.ids.join('|')];
+      csv += row.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',') + '\n';
     });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = 'test_records_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'test_records_' + new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' }) + '.csv';
     a.click();
   }
 
@@ -1000,7 +1015,7 @@ class Component extends DCLogic {
     const secs = st.lastConn ? (Date.now() - st.lastConn) / 1000 : null;
     const conn = secs === null ? 'wait' : secs < 15 ? 'ok' : secs < 60 ? 'slow' : 'lost';
     const connText = conn === 'wait' ? 'รอสัญญาณจากเครื่อง…'
-      : conn === 'ok' ? 'เชื่อมต่ออยู่ · ' + new Date(st.lastConn).toLocaleTimeString('th-TH')
+      : conn === 'ok' ? 'เชื่อมต่ออยู่ · ' + new Date(st.lastConn).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })
       : conn === 'slow' ? 'ไม่มีข้อมูลใหม่ ' + Math.floor(secs) + ' วินาที'
       : 'ขาดการเชื่อมต่อ ' + Math.floor(secs / 60) + ' นาที';
     const setting = Number(d.setting || 0), counting = Number(d.counting || 0);
@@ -1013,7 +1028,7 @@ class Component extends DCLogic {
       const pe = this.parseEv(r.event);
       const isNew = st.newIds.indexOf(r.id) >= 0;
       return {
-        id: r.id, time: new Date(r.created_at).toLocaleTimeString('th-TH'),
+        id: r.id, time: new Date(r.created_at).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }),
         isNg: pe.ng, title: pe.ng ? 'NG — ตรวจไม่พบสีครบ' : 'OK — ผ่านการตรวจสี',
         detail: pe.ng ? 'สีที่หายไป: ' + this.missingLabel(pe) + ' · event: ' + r.event : 'event: ' + r.event,
         color: pe.ng ? '#b91c1c' : INK,
@@ -1027,9 +1042,15 @@ class Component extends DCLogic {
       };
     });
 
-    let hist = events.map((r) => {
+    const histSrc = st.historyEvents || [];
+    // เรียงจากเก่าไปใหม่ก่อน เพื่อไล่เลขลำดับชิ้นงานให้ตรงกับลำดับที่เทสจริง (ชิ้นแรก = 1)
+    const histSeq = {};
+    histSrc.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .forEach((r, i) => { histSeq[r.id] = i + 1; });
+    let hist = histSrc.map((r) => {
       const pe = this.parseEv(r.event);
-      return { id: r.id, time: new Date(r.created_at).toLocaleString('th-TH', { hour12: false }), event: r.event,
+      return { id: r.id, seq: histSeq[r.id],
+        time: new Date(r.created_at).toLocaleString('th-TH', { hour12: false, timeZone: 'Asia/Bangkok' }), event: r.event,
         missing: this.missingLabel(pe), missColor: pe.ng ? '#b45309' : MUTE,
         stamp: pe.ng ? 'NG' : 'OK', stampBg: pe.ng ? '#fee2e2' : '#dcfce7', stampFg: pe.ng ? '#b91c1c' : '#15803d',
         ng: pe.ng, ids: pe.ids };
@@ -1098,7 +1119,7 @@ class Component extends DCLogic {
       alarmOn: conn === 'lost' || !!st.lockStart,
       alarmText: st.lockStart ? '🔒 เครื่องติด LOCK / NG · ' + st.lockSecs + ' วินาที — ตรวจสอบชิ้นงานที่หัวตรวจ'
         : '⚠ ขาดการเชื่อมต่อกับ ESP32 — ตรวจสอบไฟเลี้ยงและ WiFi',
-      lastUpdate: st.lastConn ? new Date(st.lastConn).toLocaleTimeString('th-TH') : '—',
+      lastUpdate: st.lastConn ? new Date(st.lastConn).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }) : '—',
 
       okTotal: Math.round(p.ok).toLocaleString(), ngTotal: Math.round(p.ng).toLocaleString(),
       yieldTxt: p.yld.toFixed(1) + '%',
@@ -1110,7 +1131,7 @@ class Component extends DCLogic {
       rateTxt: p.rate.toFixed(1), downTxt: (st.downSecs / 60).toFixed(1), etaTxt: etaTxt,
       lockSecs: st.lockSecs, lockColor: st.lockStart ? RED : INK,
       lockPanelBg: st.lockStart ? '#b91c1c' : '#2b2f52',
-      lastNgText: lastNg ? 'NG ล่าสุด ' + new Date(lastNg.created_at).toLocaleTimeString('th-TH') + ' · สีที่หาย ' + this.missingLabel(lastNgP) : 'ยังไม่มี NG ในกะนี้',
+      lastNgText: lastNg ? 'NG ล่าสุด ' + new Date(lastNg.created_at).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }) + ' · สีที่หาย ' + this.missingLabel(lastNgP) : 'ยังไม่มี NG ในกะนี้',
 
       tiles: [
         { label: 'OK สะสม', icon: '✓', iconBg: '#dcfce7', iconFg: GREEN, value: Math.round(p.ok).toLocaleString(), unit: 'ชิ้น', sub: 'ผ่านการตรวจสีครบ', pillBg: '#f0fdf4', pillFg: '#15803d', spark: this.spark(this.okHist, 120, 30) },
