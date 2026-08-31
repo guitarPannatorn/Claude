@@ -444,7 +444,7 @@ a{color:#4f6bf6;text-decoration:none}a:hover{color:#3a54d6}
       <div style="animation:viewIn .32s ease both">
         <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:18px">
           <div>
-            <h2 style="font:700 clamp(22px,2.6vw,30px)/1.2 'IBM Plex Sans Thai',sans-serif;margin:0">{{ greeting }}</h2>
+            <h2 style="font:700 clamp(22px,2.6vw,30px)/1.2 'IBM Plex Sans Thai',sans-serif;margin:0">HuskyLens ตรวจจับสี</h2>
             <div style="font:400 13.5px/1.5 'IBM Plex Sans Thai',sans-serif;color:#7b8194;margin-top:6px">ภาพรวมผลการเทสวันนี้ — อัปเดตล่าสุด {{ lastUpdate }}</div>
           </div>
         </div>
@@ -1097,8 +1097,6 @@ class Component extends DCLogic {
     const lastNg = events.find((r) => this.parseEv(r.event).ng);
     const lastNgP = lastNg ? this.parseEv(lastNg.event) : null;
     const etaTxt = (d.rate > 0 && setting > counting) ? ((setting - counting) / d.rate).toFixed(1) + ' นาที' : '—';
-    const hr = new Date().getHours();
-    const greeting = (hr < 12 ? 'สวัสดีตอนเช้า' : hr < 17 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น') + ' 👋';
 
     return {
       needLogin: st.ready && !st.authed,
@@ -1106,7 +1104,7 @@ class Component extends DCLogic {
       tvMode: st.authed && st.tv,
       isLive: st.view === 'live', isFeed: st.view === 'feed', isHistory: st.view === 'history',
       isLot: st.view === 'lot', isReport: st.view === 'report',
-      viewTitle: viewTitles[st.view], greeting: greeting,
+      viewTitle: viewTitles[st.view],
       sparkOn: this.props.showSparklines !== false,
       email: st.email, pw: st.pw, err: st.err, loginLabel: st.busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ',
       onEmail: (e) => this.setState({ email: e.target.value }),
