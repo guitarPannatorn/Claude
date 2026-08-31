@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Color Inspection Station — แผงควบคุม</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --ok: #10893e;
+    --ng: #d13438;
+    --warn: #b45309;
+    --shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1c1f25;
+      --border: #2c313a;
+      --text: #e8eaed;
+      --muted: #9aa2ae;
+      --accent: #5b8cf7;
+      --ok: #3fb950;
+      --ng: #f85149;
+      --warn: #d29922;
+      --shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Noto Sans Thai", system-ui, -apple-system, sans-serif;
+    font-size: 15px; line-height: 1.55;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; font-weight: 600;
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .stat .value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat.ok .value { color: var(--ok); }
+  .stat.ng .value { color: var(--ng); }
+
+  .lamps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .lamp {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 12px; font-size: 13px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border); }
+  .lamp.on .dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .lamp.on.alarm .dot { background: var(--ng); box-shadow: 0 0 6px var(--ng); }
+
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text);
+    padding: 10px 16px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger  { background: var(--ng); border-color: var(--ng); color: #fff; }
+  button.warn    { border-color: var(--warn); color: var(--warn); }
+
+  input {
+    font: inherit; padding: 9px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    width: 100%;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .row input { width: 110px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 12px; font-weight: 600; }
+  td.ev { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+  .log-wrap { max-height: 300px; overflow-y: auto; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);
+    border-radius: 8px; padding: 11px 18px; font-size: 14px; z-index: 50;
+  }
+  #toast[hidden] { display: none; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+  .live { font-size: 12px; color: var(--muted); }
+  .live b { color: var(--ok); }
+  .live b.stale { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Color Inspection Station</h1>
+  <div class="sub">แผงควบคุมและตรวจสอบสถานะเครื่อง</div>
+
+  <!-- ---------------- LOGIN ---------------- -->
+  <div class="card" id="loginCard">
+    <h2>เข้าสู่ระบบ</h2>
+    <div class="row" style="flex-direction:column; align-items:stretch; max-width:340px">
+      <input id="email" type="email" placeholder="อีเมล" autocomplete="username" style="width:100%">
+      <input id="password" type="password" placeholder="รหัสผ่าน" autocomplete="current-password" style="width:100%">
+      <button class="primary" id="btnLogin">เข้าสู่ระบบ</button>
+    </div>
+    <div class="hint">
+      การสั่งงานเครื่องต้องล็อกอินก่อน เพราะ RLS policy อนุญาตให้เฉพาะ
+      <code>authenticated</code> เขียนตาราง <code>commands</code> ได้
+    </div>
+  </div>
+
+  <!-- ---------------- PANEL ---------------- -->
+  <div id="panel" hidden>
+
+    <div class="card">
+      <h2>สถานะปัจจุบัน <span class="live" id="live"></span></h2>
+      <div class="grid">
+        <div class="stat">    <div class="label">เป้าหมาย (Setting)</div><div class="value" id="vSetting">–</div></div>
+        <div class="stat">    <div class="label">นับรอบนี้ (Counting)</div><div class="value" id="vCounting">–</div></div>
+        <div class="stat ok"> <div class="label">ยอดรวม OK สะสม</div>   <div class="value" id="vOk">–</div></div>
+        <div class="stat ng"> <div class="label">ยอดรวม NG สะสม</div>   <div class="value" id="vNg">–</div></div>
+        <div class="stat">    <div class="label">อัตราการนับ /นาที</div> <div class="value" id="vRate">–</div></div>
+      </div>
+      <div class="lamps">
+        <span class="lamp" id="lD9">   <span class="dot"></span>D9 ตรวจพบครบ 2 สี</span>
+        <span class="lamp" id="lD11">  <span class="dot"></span>D11 OK</span>
+        <span class="lamp alarm" id="lD12"> <span class="dot"></span>D12 NG</span>
+        <span class="lamp alarm" id="lLockOld"> <span class="dot"></span>LOCK (NG)</span>
+        <span class="lamp alarm" id="lLockAuto"><span class="dot"></span>LOCK (Auto 5 วิ)</span>
+        <span class="lamp" id="lFull"> <span class="dot"></span>Full Counter</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>สั่งงานเครื่อง</h2>
+      <div class="btns">
+        <button id="btnResetNg">เคลียร์ NG / ปลดล็อก</button>
+        <button id="btnResetCount">เคลียร์ Counting รอบนี้</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <span>ตั้งเป้าหมาย</span>
+        <input id="setValue" type="number" min="0" max="100" step="5" value="10">
+        <span>ชิ้น</span>
+        <button id="btnSet">ส่งค่า</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>โซนสำหรับทดสอบ — ใช้ด้วยความระมัดระวัง</h2>
+      <div class="btns">
+        <button class="warn"   id="btnResetTotal">Reset ยอดรวมสะสม (OK/NG)</button>
+        <button class="danger" id="btnFactory">คืนค่าทั้งหมด (Factory Reset)</button>
+      </div>
+      <div class="hint">
+        <b>Reset ยอดรวมสะสม</b> — ล้าง <code>ok_total</code> / <code>ng_total</code> ทั้งบนเว็บและใน EEPROM ของ Nano
+        แต่ไม่แตะ Setting กับ Counting ของรอบปัจจุบัน<br>
+        <b>คืนค่าทั้งหมด</b> — ล้างยอดรวม + Counting = 0 + Setting = 10 + ปลดสถานะ NG/LOCK ทั้งหมด
+        และล้างประวัติในตาราง <code>event_log</code> ทิ้ง<br>
+        คำสั่งจะถึงเครื่องภายใน ~2 วินาที (ESP32 ดึงคิวคำสั่งทุก 2 วิ) ถ้าเครื่องออฟไลน์อยู่
+        ค่าบนเว็บจะถูกล้างทันที ส่วนตัวเครื่องจะรีเซ็ตตอนต่อเน็ตได้อีกครั้ง
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ประวัติเหตุการณ์ล่าสุด</h2>
+      <div class="log-wrap">
+        <table>
+          <thead><tr><th style="width:170px">เวลา</th><th>เหตุการณ์</th></tr></thead>
+          <tbody id="logBody"><tr><td colspan="2" style="color:var(--muted)">กำลังโหลด…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="btns"><button id="btnLogout">ออกจากระบบ</button></div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ===================================================================
+// ตั้งค่า Supabase
+// anon key ไม่ใช่ความลับ ถูกออกแบบมาให้ฝังในเบราว์เซอร์อยู่แล้ว
+// ความปลอดภัยจริงมาจาก RLS policy ฝั่งเซิร์ฟเวอร์
+// ===================================================================
+const SUPABASE_URL      = "https://ufmwcstlzygrnmzkpgbs.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmbXdjc3Rsenlncm5temtwZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3NzgxOTgsImV4cCI6MjEwMzM1NDE5OH0.geNcAdB1YL2N9XozB49uyu-__N5KyRg4gKuj0ftOD1g";
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const $ = (id) => document.getElementById(id);
+let pollTimer = null;
+
+function toast(msg, ms = 2600) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(t._t);
+  t._t = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+function setLamp(id, on) {
+  $(id).classList.toggle("on", !!on);
+}
+
+// ------------------------- AUTH -------------------------
+async function refreshAuthUI() {
+  const { data: { session } } = await db.auth.getSession();
+  const loggedIn = !!session;
+
+  $("loginCard").hidden = loggedIn;
+  $("panel").hidden     = !loggedIn;
+
+  clearInterval(pollTimer);
+  if (loggedIn) {
+    await pollAll();
+    pollTimer = setInterval(pollAll, 2000);
+  }
+}
+
+$("btnLogin").onclick = async () => {
+  const { error } = await db.auth.signInWithPassword({
+    email: $("email").value.trim(),
+    password: $("password").value
+  });
+  if (error) return toast("เข้าสู่ระบบไม่สำเร็จ: " + error.message, 4000);
+  $("password").value = "";
+  refreshAuthUI();
+};
+
+$("btnLogout").onclick = async () => { await db.auth.signOut(); refreshAuthUI(); };
+
+// ------------------------- อ่านสถานะ -------------------------
+async function pollAll() {
+  const [{ data: st, error: e1 }, { data: logs }] = await Promise.all([
+    db.from("status").select("*").eq("id", 1).maybeSingle(),
+    db.from("event_log").select("event, created_at").order("id", { ascending: false }).limit(30)
+  ]);
+
+  if (e1) { $("live").textContent = "อ่านข้อมูลไม่ได้: " + e1.message; return; }
+
+  if (st) {
+    $("vSetting").textContent  = st.setting;
+    $("vCounting").textContent = st.counting;
+    $("vOk").textContent       = st.ok_total;
+    $("vNg").textContent       = st.ng_total;
+    $("vRate").textContent     = Number(st.rate).toFixed(1);
+
+    setLamp("lD9", st.d9);   setLamp("lD11", st.d11);  setLamp("lD12", st.d12);
+    setLamp("lLockOld", st.lock_old); setLamp("lLockAuto", st.lock_auto);
+    setLamp("lFull", st.full_counter);
+
+    // เครื่องส่งข้อมูลทุก 2 วิ ถ้าเงียบเกิน 10 วิ ถือว่าออฟไลน์
+    const ageSec = (Date.now() - new Date(st.updated_at).getTime()) / 1000;
+    const online = ageSec < 10;
+    $("live").innerHTML = online
+      ? '<b>● เครื่องออนไลน์</b>'
+      : `<b class="stale">● ไม่มีข้อมูลมา ${Math.round(ageSec)} วินาที</b>`;
+  }
+
+  const tb = $("logBody");
+  if (!logs || logs.length === 0) {
+    tb.innerHTML = '<tr><td colspan="2" style="color:var(--muted)">ยังไม่มีเหตุการณ์</td></tr>';
+  } else {
+    tb.innerHTML = logs.map(r =>
+      `<tr><td>${new Date(r.created_at).toLocaleString("th-TH")}</td><td class="ev">${escapeHtml(r.event)}</td></tr>`
+    ).join("");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ------------------------- ส่งคำสั่ง -------------------------
+async function sendCommand(cmd, value = null) {
+  const row = value === null ? { cmd } : { cmd, value };
+  const { error } = await db.from("commands").insert(row);
+  if (error) return toast("ส่งคำสั่งไม่สำเร็จ: " + error.message, 4000);
+  toast(`ส่งคำสั่ง ${cmd} แล้ว เครื่องจะรับภายใน ~2 วินาที`);
+}
+
+$("btnResetNg").onclick    = () => sendCommand("RESET");
+$("btnResetCount").onclick = () => sendCommand("RESET_COUNT");
+
+$("btnSet").onclick = () => {
+  const v = parseInt($("setValue").value, 10);
+  if (!Number.isFinite(v) || v < 0 || v > 100) return toast("ค่าต้องอยู่ระหว่าง 0 ถึง 100");
+  sendCommand("SET", v);
+};
+
+// ------------------------- โซนทดสอบ -------------------------
+$("btnResetTotal").onclick = async () => {
+  if (!confirm("ล้างยอดรวมสะสม OK/NG ทั้งหมด?\n\nยอดที่เก็บใน EEPROM ของ Nano จะถูกล้างด้วย และกู้คืนไม่ได้")) return;
+
+  const { error } = await db.rpc("reset_totals");
+  if (error) return toast("ล้างยอดรวมไม่สำเร็จ: " + error.message, 4000);
+
+  toast("ล้างยอดรวมสะสมแล้ว");
+  pollAll();
+};
+
+$("btnFactory").onclick = async () => {
+  if (!confirm("คืนค่าทั้งหมดกลับค่าเริ่มต้น?\n\n• ยอดรวม OK/NG = 0\n• Counting = 0, Setting = 10\n• ปลดสถานะ NG / LOCK ทั้งหมด\n• ล้างประวัติ event_log ทิ้งทั้งหมด\n\nกู้คืนไม่ได้")) return;
+  if (prompt('พิมพ์คำว่า  RESET  เพื่อยืนยัน') !== "RESET") return toast("ยกเลิกแล้ว");
+
+  const { error } = await db.rpc("factory_reset", { p_clear_log: true });
+  if (error) return toast("คืนค่าไม่สำเร็จ: " + error.message, 4000);
+
+  toast("คืนค่าทั้งหมดเรียบร้อย เครื่องจะรีเซ็ตตามภายใน ~2 วินาที", 4000);
+  pollAll();
+};
+
+// ------------------------- เริ่มทำงาน -------------------------
+db.auth.onAuthStateChange(() => refreshAuthUI());
+refreshAuthUI();
+</script>
+</body>
+</html>

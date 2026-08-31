@@ -1,0 +1,12 @@
+# ค่าความลับจริง (รหัส WiFi) - ห้าม commit
+firmware/esp32_supabase_rfid/arduino_secrets.h
+web/config.local.js
+
+# Arduino build
+build/
+*.hex
+*.elf
+
+# OS
+.DS_Store
+Thumbs.db
