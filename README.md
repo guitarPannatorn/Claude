@@ -116,10 +116,20 @@ cp arduino_secrets.example.h arduino_secrets.h
 > แบบ `SECURITY DEFINER` ที่ทำได้เฉพาะงานที่กำหนด
 
 ### 4) หน้าเว็บ
-เปิด `web/control.html` ได้ตรงๆ หรือ deploy ขึ้น hosting ที่ใช้อยู่
-ต้องล็อกอินด้วยบัญชี Supabase Auth ก่อน เพราะ RLS ให้เฉพาะ `authenticated` เขียน `commands` ได้
 
-ถ้าจะเอาไปใส่เว็บเดิมที่มีอยู่แล้ว ก๊อปแค่ส่วนนี้พอ:
+มี 2 ทางเลือก
+
+**ทาง A — ใช้หน้าใหม่ทั้งหน้า** เปิด `web/control.html` ได้ตรงๆ หรือ deploy ขึ้น hosting
+
+**ทาง B — แปะปุ่มเข้าเว็บเดิม** ก๊อป `web/snippet-reset-buttons.html` ทั้งไฟล์
+ไปวางใน `index.html` ของเว็บเดิม ตรงก่อนปิด `</body>`
+บล็อกนี้ห่อไว้ใน IIFE ไม่ประกาศตัวแปร global และ id/class ขึ้นต้นด้วย `ci-` ทั้งหมด
+จึงไม่ชนกับโค้ดเดิม ถ้าหน้าเว็บโหลด supabase-js ไว้แล้วจะใช้ตัวเดิม ไม่โหลดซ้ำ
+
+ทั้งสองทางต้องล็อกอินด้วยบัญชี Supabase Auth ก่อน เพราะ RLS ให้เฉพาะ `authenticated`
+เขียนตาราง `commands` ได้ (ดูหัวข้อ "ข้อควรรู้เรื่องสิทธิ์" ด้านล่าง)
+
+ถ้าจะเขียนเองก็ใช้แค่นี้:
 
 ```js
 // ปุ่ม "Reset ยอดรวม"
@@ -133,6 +143,48 @@ await supabase.from('commands').insert({ cmd: 'RESET' });
 await supabase.from('commands').insert({ cmd: 'RESET_COUNT' });
 await supabase.from('commands').insert({ cmd: 'SET', value: 20 });
 ```
+
+---
+
+## ข้อควรรู้เรื่องสิทธิ์ (RLS)
+
+สิทธิ์ปัจจุบันบน Supabase เป็นแบบนี้
+
+| ตาราง | `anon` (คีย์ที่ฝังใน ESP32 และหน้าเว็บ) | `authenticated` (ล็อกอินแล้ว) |
+|---|---|---|
+| `status` | insert / select / update | select |
+| `event_log` | insert | select |
+| `commands` | select / update | **insert** / select |
+
+จุดสำคัญ: **`anon` สั่งงานเครื่องไม่ได้** เพราะ insert ตาราง `commands` ไม่ได้
+
+- หน้าเว็บที่ใช้แค่ anon key **แสดงสถานะได้** (anon select `status` ได้)
+- แต่ **กดปุ่มสั่งงานไม่ได้** จะได้ error `new row violates row-level security policy`
+- ส่วน `event_log` anon อ่านไม่ได้เลย ตารางประวัติจะว่างถ้าไม่ล็อกอิน
+
+ถ้าเจอปุ่มกดแล้วไม่มีอะไรเกิดขึ้น ให้เปิด DevTools Console ดูก่อน มักเป็นเรื่องนี้
+
+ทางเลือกถ้าไม่อยากล็อกอิน (เช่นจอแสดงผลหน้างานที่ให้ทุกคนกดได้):
+เพิ่ม policy ให้ `anon` insert `commands` ได้ แต่ต้องเข้าใจว่า anon key ฝังอยู่ในหน้าเว็บสาธารณะ
+= **ใครก็ตามบนอินเทอร์เน็ตที่เปิด view-source จะสั่งงานเครื่องได้** ไม่แนะนำ
+
+---
+
+## หมายเหตุเรื่องการ deploy บน Netlify
+
+เว็บที่ใช้อยู่ (`stunning-speculoos-0a330b.netlify.app`) ตอนนี้เป็นแบบ **manual drop deploy**
+คือลากไฟล์ไปวางใน Netlify ไม่ได้ต่อกับ Git repo (`deploy_source: "drop"`, ไม่มี `commit_ref`)
+และทั้งเว็บมีไฟล์เดียวคือ `index.html`
+
+ผลที่ตามมา:
+
+- **push โค้ดขึ้น repo นี้ ไม่ได้ทำให้เว็บอัปเดต** ต้องอัปโหลดไฟล์ใหม่เข้า Netlify เองทุกครั้ง
+- **`index.html` ตัวจริงมีอยู่ที่เดียวคือบน Netlify** ไม่มีสำเนาสำรองใน repo
+  ถ้าลบ deploy ทิ้งหรือ drop ทับด้วยไฟล์ผิด งานที่แก้มาทั้งหมดหายทันที
+
+**แนะนำให้ทำ** — เอา `index.html` ตัวปัจจุบันมาใส่ใน repo นี้ แล้วต่อ Netlify กับ GitHub
+(Netlify → Project configuration → Build & deploy → Link repository)
+หลังจากนั้นทุกครั้งที่ push เว็บจะ deploy ให้อัตโนมัติ และมีประวัติย้อนกลับได้
 
 ---
 

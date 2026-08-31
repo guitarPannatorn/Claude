@@ -1,0 +1,167 @@
+<!--
+  ===================================================================
+  บล็อกปุ่ม "Reset ยอดรวม" + "คืนค่าทั้งหมด" แบบพร้อมวาง
+  ===================================================================
+
+  วิธีใช้:
+    ก๊อปทั้งบล็อกนี้ (ตั้งแต่ <div id="ci-reset-zone"> จนจบ </script>)
+    ไปวางใน index.html ของเว็บที่ deploy บน Netlify
+    ตรงตำแหน่งก่อนปิด </body>
+
+  ออกแบบมาให้แปะทับเว็บเดิมได้เลยโดยไม่ชนกับโค้ดที่มีอยู่:
+    - ทุกอย่างอยู่ใน IIFE ไม่ประกาศตัวแปร global
+    - ชื่อ id และ class ขึ้นต้นด้วย ci- ทั้งหมด
+    - ถ้าหน้าเว็บโหลด supabase-js ไว้แล้วจะใช้ตัวเดิม ไม่โหลดซ้ำ
+    - ถ้ามี client อยู่แล้วที่ window.supabaseClient หรือ window.db จะใช้ตัวนั้น
+
+  หมายเหตุเรื่องสิทธิ์:
+    RLS policy ปัจจุบันให้เฉพาะ authenticated เท่านั้นที่สั่งงานเครื่องได้
+    (anon insert ตาราง commands ไม่ได้) บล็อกนี้จึงมีฟอร์มล็อกอินในตัว
+    ถ้ายังไม่ได้ล็อกอินจะขึ้นให้ล็อกอินก่อนอัตโนมัติ
+  ===================================================================
+-->
+
+<div id="ci-reset-zone">
+  <style>
+    #ci-reset-zone {
+      font-family: "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+      border: 1px solid rgba(209,52,56,.45); border-radius: 10px;
+      padding: 16px; margin: 20px 0; max-width: 640px;
+    }
+    #ci-reset-zone h3 { margin: 0 0 4px; font-size: 15px; }
+    #ci-reset-zone .ci-note { font-size: 12.5px; opacity: .75; margin: 0 0 14px; line-height: 1.5; }
+    #ci-reset-zone .ci-btns { display: flex; flex-wrap: wrap; gap: 10px; }
+    #ci-reset-zone button {
+      font: inherit; font-weight: 600; cursor: pointer; color: #fff;
+      border: 0; border-radius: 8px; padding: 10px 16px;
+    }
+    #ci-reset-zone button:disabled { opacity: .5; cursor: not-allowed; }
+    #ci-reset-zone .ci-warn { background: #b45309; }
+    #ci-reset-zone .ci-danger { background: #d13438; }
+    #ci-reset-zone .ci-plain { background: #4b5563; }
+    #ci-reset-zone input {
+      font: inherit; padding: 9px 12px; border-radius: 8px;
+      border: 1px solid rgba(128,128,128,.4); background: transparent;
+      color: inherit; width: 220px; margin-right: 8px; margin-bottom: 8px;
+    }
+    #ci-reset-zone .ci-msg { font-size: 13px; margin-top: 12px; min-height: 18px; }
+    #ci-reset-zone [hidden] { display: none !important; }
+  </style>
+
+  <h3>โซนสำหรับทดสอบ</h3>
+  <p class="ci-note">
+    <b>Reset ยอดรวมสะสม</b> — ล้าง ok_total / ng_total ทั้งบนเว็บและใน EEPROM ของ Nano
+    แต่ไม่แตะ Setting กับ Counting ของรอบปัจจุบัน<br>
+    <b>คืนค่าทั้งหมด</b> — ล้างยอดรวม + Counting = 0 + Setting = 10 + ปลดสถานะ NG/LOCK
+    และล้างประวัติ event_log ทิ้ง<br>
+    คำสั่งจะถึงเครื่องภายใน ~2 วินาที ถ้าเครื่องออฟไลน์ ค่าบนเว็บจะถูกล้างทันที
+    ส่วนตัวเครื่องจะรีเซ็ตตามตอนต่อเน็ตได้อีกครั้ง
+  </p>
+
+  <div id="ci-login" hidden>
+    <input id="ci-email" type="email" placeholder="อีเมล" autocomplete="username">
+    <input id="ci-pass" type="password" placeholder="รหัสผ่าน" autocomplete="current-password">
+    <button class="ci-plain" id="ci-btn-login">เข้าสู่ระบบเพื่อสั่งงาน</button>
+  </div>
+
+  <div class="ci-btns" id="ci-controls" hidden>
+    <button class="ci-warn"   id="ci-btn-total">Reset ยอดรวมสะสม (OK/NG)</button>
+    <button class="ci-danger" id="ci-btn-factory">คืนค่าทั้งหมด (Factory Reset)</button>
+    <button class="ci-plain"  id="ci-btn-logout">ออกจากระบบ</button>
+  </div>
+
+  <div class="ci-msg" id="ci-msg"></div>
+</div>
+
+<script>
+(async function () {
+  "use strict";
+
+  const SUPABASE_URL      = "https://ufmwcstlzygrnmzkpgbs.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmbXdjc3Rsenlncm5temtwZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3NzgxOTgsImV4cCI6MjEwMzM1NDE5OH0.geNcAdB1YL2N9XozB49uyu-__N5KyRg4gKuj0ftOD1g";
+
+  const $ = (id) => document.getElementById(id);
+  const msg = (t, isErr) => {
+    const el = $("ci-msg");
+    el.textContent = t;
+    el.style.color = isErr ? "#d13438" : "inherit";
+  };
+
+  // ---- โหลด supabase-js ถ้าหน้าเว็บยังไม่มี ----
+  function loadScript(src) {
+    return new Promise((ok, err) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = ok; s.onerror = () => err(new Error("โหลด " + src + " ไม่สำเร็จ"));
+      document.head.appendChild(s);
+    });
+  }
+
+  try {
+    if (!window.supabase || !window.supabase.createClient) {
+      await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js");
+    }
+  } catch (e) {
+    return msg("โหลดไลบรารี Supabase ไม่สำเร็จ: " + e.message, true);
+  }
+
+  // ใช้ client เดิมของหน้าเว็บถ้ามี จะได้แชร์ session กัน
+  const db = window.supabaseClient || window.db ||
+             window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // ---- สลับหน้าตาตามสถานะล็อกอิน ----
+  async function refresh() {
+    const { data: { session } } = await db.auth.getSession();
+    $("ci-login").hidden    = !!session;
+    $("ci-controls").hidden = !session;
+    if (session) msg("ล็อกอินแล้ว: " + session.user.email);
+  }
+
+  $("ci-btn-login").onclick = async () => {
+    const { error } = await db.auth.signInWithPassword({
+      email: $("ci-email").value.trim(),
+      password: $("ci-pass").value
+    });
+    if (error) return msg("เข้าสู่ระบบไม่สำเร็จ: " + error.message, true);
+    $("ci-pass").value = "";
+    refresh();
+  };
+
+  $("ci-btn-logout").onclick = async () => {
+    await db.auth.signOut();
+    msg("");
+    refresh();
+  };
+
+  // ---- ปุ่มรีเซ็ต ----
+  function busy(state) {
+    $("ci-btn-total").disabled = state;
+    $("ci-btn-factory").disabled = state;
+  }
+
+  $("ci-btn-total").onclick = async () => {
+    if (!confirm("ล้างยอดรวมสะสม OK/NG ทั้งหมด?\n\nยอดที่เก็บใน EEPROM ของ Nano จะถูกล้างด้วย และกู้คืนไม่ได้")) return;
+
+    busy(true);
+    const { error } = await db.rpc("reset_totals");
+    busy(false);
+
+    if (error) return msg("ล้างยอดรวมไม่สำเร็จ: " + error.message, true);
+    msg("ล้างยอดรวมสะสมแล้ว เครื่องจะรับคำสั่งภายใน ~2 วินาที");
+  };
+
+  $("ci-btn-factory").onclick = async () => {
+    if (!confirm("คืนค่าทั้งหมดกลับค่าเริ่มต้น?\n\n• ยอดรวม OK/NG = 0\n• Counting = 0, Setting = 10\n• ปลดสถานะ NG / LOCK ทั้งหมด\n• ล้างประวัติ event_log ทิ้งทั้งหมด\n\nกู้คืนไม่ได้")) return;
+    if (prompt("พิมพ์คำว่า  RESET  เพื่อยืนยัน") !== "RESET") return msg("ยกเลิกแล้ว");
+
+    busy(true);
+    const { error } = await db.rpc("factory_reset", { p_clear_log: true });
+    busy(false);
+
+    if (error) return msg("คืนค่าไม่สำเร็จ: " + error.message, true);
+    msg("คืนค่าทั้งหมดเรียบร้อย เครื่องจะรีเซ็ตตามภายใน ~2 วินาที");
+  };
+
+  db.auth.onAuthStateChange(() => refresh());
+  refresh();
+})();
+</script>
