@@ -335,6 +335,7 @@ void loop()
   handleNgDelay();
   handleColorMonitor();
   handleNgOutput();
+  handleOkOutput();
 
   handleSettingButtons();
   handleCountingButtonManual();
@@ -735,15 +736,21 @@ void handleOkAutoOff()
 
 
 // ================================================================
-// D12 OUTPUT รวมสถานะ
+// D9 / D11 / D12 OUTPUT รวมสถานะ
 // ================================================================
 
-// ครบเป้าแล้วต้องไม่โชว์ผลตรวจที่ D9/D12 เลย ทั้งขาออกจริงและค่าที่ส่งขึ้นเว็บ
-// (สถานะ NG/LOCK ข้างในยังจำไว้เหมือนเดิม พอกด RESET ปลด Full ถึงกลับมาแสดงตามจริง)
+// ครบเป้าแล้วต้องไม่โชว์ผลตรวจที่ D9/D11/D12 เลย ทั้งขาออกจริงและค่าที่ส่งขึ้นเว็บ
+// เหลือแค่ D5/D6 ที่แสดงสถานะ Full อย่างเดียว
+// (สถานะ OK/NG/LOCK ข้างในยังจำไว้เหมือนเดิม พอกด RESET ปลด Full ถึงกลับมาแสดงตามจริง)
 // ใช้ตัวเดียวกันทั้ง 2 ที่ เพื่อไม่ให้ไฟที่หน้าเครื่องกับที่หน้าเว็บขัดกัน
 bool outputD9Active()
 {
   return !fullCounterFlag && ledMonitorOn;
+}
+
+bool outputD11Active()
+{
+  return !fullCounterFlag && ledOkOn;
 }
 
 bool outputD12Active()
@@ -754,6 +761,13 @@ bool outputD12Active()
 void handleNgOutput()
 {
   digitalWrite(LED_NG, outputD12Active() ? HIGH : LOW);
+}
+
+// ชิ้นที่ทำให้ครบเป้าจะจุด D11 ก่อน แล้วค่อยตั้ง Full ในจังหวะเดียวกัน
+// จึงต้องมีตัวไล่ดับทุกรอบแบบเดียวกับ D12 ไม่งั้นไฟ OK จะค้างสว่างตอน Full
+void handleOkOutput()
+{
+  digitalWrite(LED_OK, outputD11Active() ? HIGH : LOW);
 }
 
 
@@ -1347,7 +1361,7 @@ void handleEspSend()
   espSerial.print(outputD9Active() ? 1 : 0);
 
   espSerial.print(F(",\"d11\":"));
-  espSerial.print(ledOkOn ? 1 : 0);
+  espSerial.print(outputD11Active() ? 1 : 0);
 
   espSerial.print(F(",\"d12\":"));
   espSerial.print(outputD12Active() ? 1 : 0);
