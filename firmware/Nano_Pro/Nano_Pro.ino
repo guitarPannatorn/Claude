@@ -43,7 +43,7 @@
 
 // พิมพ์ออก Serial ตอนบูต ใช้ยืนยันว่าบอร์ดกำลังรันไฟล์เวอร์ชันไหนอยู่จริง
 // (ตัวที่มีตัวมาสก์ D9/D11/D12 ตอน Full counter คือ 2026.09.01-full-mask)
-#define FW_VERSION "2026.09.01-full-mask-b"
+#define FW_VERSION "2026.09.01-full-lock-a7"
 
 
 // ================================================================
@@ -176,6 +176,12 @@ const int SETTING_MAX  = 100;
 
 bool fullCounterFlag = false;
 
+// ล็อกขาออก D9/D11/D12 ตั้งแต่วินาทีที่ D6 เริ่มมีสัญญาณ
+// ปลดได้ทางเดียวคือ A7 / RESET_COUNT (A0 ปลดไม่ได้ตั้งใจให้เป็นแบบนั้น)
+// แยกตัวแปรจาก fullCounterFlag เพื่อให้การล็อกเป็นแบบ "ค้างไว้จนกว่าจะสั่งปลด"
+// ไม่ใช่ตามสถานะครบเป้าที่อาจถูกเคลียร์จากทางอื่น
+bool fullOutputLock = false;
+
 bool lastSetUpState   = HIGH;
 bool lastSetDownState = HIGH;
 unsigned long lastSetUpDebounce   = 0;
@@ -294,6 +300,7 @@ void setup()
   if (countingValue >= settingValue)
   {
     fullCounterFlag = true;
+    fullOutputLock = true;
     digitalWrite(PIN_FULL_OUT, HIGH);
   }
 
@@ -428,18 +435,11 @@ void doSystemReset()
 
   Serial.println(F("D12 OFF / ปลด Lock ทั้งระบบเก่าและ Auto"));
 
-  // ปลด Full counter ด้วย เพื่อให้รับงานต่อได้โดยไม่ต้องล้าง Counting ทิ้ง
-  // (ต่างจาก A7/RESET_COUNT ที่ล้าง Counting = 0 เพื่อเริ่มรอบใหม่)
-  // หมายเหตุ: Counting ยังค้างที่เลขเดิม พอนับเพิ่มอีกชิ้นก็จะถึงเป้าและ
-  // ขึ้น Full อีกครั้งทันที = กด RESET หนึ่งครั้งได้เพิ่มหนึ่งชิ้น
-  if (fullCounterFlag)
+  // A0 ปลดได้แค่ NG/LOCK ของรอบตรวจ ปลด Full counter ไม่ได้
+  // ต้องใช้ A7 / RESET_COUNT เท่านั้น ไม่งั้นกด A0 ทีก็แอบรับงานเพิ่มได้ทีละชิ้น
+  if (outputsLockedByFull())
   {
-    fullCounterFlag = false;
-
-    digitalWrite(PIN_FULL_OUT, LOW);
-    digitalWrite(PIN_FULL_OUT_BLINK, LOW);
-
-    Serial.println(F("ปลด Full counter -> รับงานต่อได้อีก (Counting ยังค้างที่เลขเดิม)"));
+    Serial.println(F("ยัง Full counter อยู่ -> D9/D11/D12 ยังล็อก ต้องกด A7 ก่อน"));
   }
 
   lastEventMsg = "reset_ng";
@@ -460,12 +460,21 @@ void doCountingReset()
 {
   countingValue = 0;
   fullCounterFlag = false;
+  fullOutputLock = false;
 
   digitalWrite(PIN_FULL_OUT, LOW);
   digitalWrite(PIN_FULL_OUT_BLINK, LOW);
   d6BlinkState = false;
 
-  Serial.println(F("RESET COUNT (A7) -> Counting = 0, ปลด Full Counter"));
+  // ล้างสถานะค้างของรอบก่อน ไม่งั้นพอปลดล็อกปุ๊บ checkD9FallingEdge()
+  // จะเห็นเป็นขอบขาลงค้างแล้วนับให้เองทันที 1 ชิ้น
+  ledMonitorOn = false;
+  lastLedMonitorOn = false;
+  autoTimerActive = false;
+
+  applyIndicatorOutputs();
+
+  Serial.println(F("RESET COUNT (A7) -> Counting = 0, ปลด Full Counter + ปลดล็อก D9/D11/D12"));
 
   lastEventMsg = "count_reset";
 
@@ -509,6 +518,7 @@ void doFactoryReset()
   settingValue  = SETTING_DEFAULT;
 
   fullCounterFlag = false;
+  fullOutputLock = false;
   digitalWrite(PIN_FULL_OUT, LOW);
   digitalWrite(PIN_FULL_OUT_BLINK, LOW);
   d6BlinkState = false;
@@ -562,9 +572,9 @@ void handleStartButton()
       Serial.println();
       Serial.println(F("START"));
 
-      if (fullCounterFlag)
+      if (outputsLockedByFull())
       {
-        Serial.println(F("Full counter - รับงานต่อไม่ได้ ต้องกด RESET ก่อน"));
+        Serial.println(F("Full counter - รับงานต่อไม่ได้ ต้องกด A7 ก่อน"));
       }
       else if (ledNgOn)
       {
@@ -751,19 +761,26 @@ void handleOkAutoOff()
 // เหลือแค่ D5/D6 ที่แสดงสถานะ Full อย่างเดียว
 // (สถานะ OK/NG/LOCK ข้างในยังจำไว้เหมือนเดิม พอกด RESET ปลด Full ถึงกลับมาแสดงตามจริง)
 // ใช้ตัวเดียวกันทั้ง 2 ที่ เพื่อไม่ให้ไฟที่หน้าเครื่องกับที่หน้าเว็บขัดกัน
+// จริงหรือไม่ว่าตอนนี้ขาออกฝั่งผลตรวจถูกล็อกอยู่
+// D6 มีสัญญาณเมื่อไหร่ = ล็อกทันที และยังล็อกต่อแม้ D6 อยู่จังหวะดับของการกะพริบ
+bool outputsLockedByFull()
+{
+  return fullCounterFlag || fullOutputLock;
+}
+
 bool outputD9Active()
 {
-  return !fullCounterFlag && ledMonitorOn;
+  return !outputsLockedByFull() && ledMonitorOn;
 }
 
 bool outputD11Active()
 {
-  return !fullCounterFlag && ledOkOn;
+  return !outputsLockedByFull() && ledOkOn;
 }
 
 bool outputD12Active()
 {
-  return !fullCounterFlag && (ledNgOn || autoFailLock);
+  return !outputsLockedByFull() && (ledNgOn || autoFailLock);
 }
 
 // ประตูเดียวที่เขียนขา D9/D11/D12 ได้
@@ -788,7 +805,7 @@ void handleColorMonitor()
   // ครบเป้าแล้ว = หยุดรับงานทุกทาง ต้องกด RESET ก่อนถึงจะตรวจต่อได้
   // บล็อกตรงนี้จุดเดียวครอบคลุมทั้งการนับอัตโนมัติจาก D9 falling edge
   // และ Auto Assessment ที่จะตัดสินเป็น NG เมื่อเห็นสีเดียวครบ 5 วินาที
-  if (fullCounterFlag)
+  if (outputsLockedByFull())
   {
     // ดับสถานะ D9 ทุกรอบ ไม่ใช่ดับครั้งเดียวตอนเข้า Full
     // (ขาจริงถูกเขียนที่ applyIndicatorOutputs() ปลายทาง)
@@ -1117,8 +1134,9 @@ void incrementCounting()
   if (countingValue >= settingValue)
   {
     fullCounterFlag = true;
+    fullOutputLock = true;
     lastEventMsg = "full_counter";
-    Serial.println(F("FULL COUNTER"));
+    Serial.println(F("FULL COUNTER -> ล็อก D9/D11/D12 จนกว่าจะกด A7"));
 
     // ครบเป้าปุ๊บ ดับ D9/D11/D12 ทันทีในจังหวะเดียวกับที่ D5/D6 ติด
     // ไม่ต้องรอจนจบรอบ loop เผื่อเส้นทางที่เรียกมามีงานยาวคั่นอยู่

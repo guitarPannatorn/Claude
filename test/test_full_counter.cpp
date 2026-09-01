@@ -4,10 +4,9 @@
 // พฤติกรรมที่ต้องการ:
 //   - พอ Counting ถึง Setting -> ขึ้น Full counter แล้วหยุดรับงานทุกทาง
 //     (ไม่นับเพิ่ม ไม่ตรวจสี ไม่ตัดสิน NG ไม่ส่ง event ขึ้นเว็บ)
-//   - ปลดได้ 2 ทาง:
-//       A7 / RESET_COUNT -> Counting = 0 เริ่มรอบใหม่
-//       A0 / RESET       -> ปลด Full แต่ Counting ค้างที่เลขเดิม
-//                           (กดหนึ่งครั้ง = รับเพิ่มได้หนึ่งชิ้นแล้วเต็มอีก)
+//   - ปลดได้ทางเดียว: A7 / RESET_COUNT -> Counting = 0 เริ่มรอบใหม่
+//     A0 / RESET ปลด NG/LOCK ของรอบตรวจได้ แต่ปลด Full ไม่ได้
+//     (ไม่งั้นกด A0 ทีก็แอบรับงานเพิ่มได้ทีละชิ้น)
 // ===================================================================
 #include "Arduino.h"
 #include "EEPROM.h"
@@ -40,6 +39,7 @@ void resetState() {
   settingValue = 3;            // ตั้งเป้าน้อยๆ จะได้ถึง Full เร็ว
   countingValue = 0;
   fullCounterFlag = false;
+  fullOutputLock = false;
   countOkTotal = 0;
   countNgTotal = 0;
   lastEventMsg = "none";
@@ -87,13 +87,15 @@ int main() {
   check("ไม่ตัดสินเป็น NG ระหว่าง Full", countNgTotal == 0);
   check("ล้าง lastLedMonitorOn กัน falling edge ค้าง", !lastLedMonitorOn);
 
-  std::cout << "\n=== สถานการณ์ที่ 4: กด A0/RESET -> ปลด Full แต่ Counting ค้างเลขเดิม ===\n";
+  std::cout << "\n=== สถานการณ์ที่ 4: กด A0/RESET ต้องปลด Full ไม่ได้ ===\n";
   doSystemReset();
-  check("Full ถูกปลดแล้ว", !fullCounterFlag);
-  check("Counting ยังค้างที่เลขเดิม ไม่ถูกล้าง", countingValue == 3);
+  check("Full ยังค้างอยู่ A0 ปลดไม่ได้", fullCounterFlag);
+  check("ตัวล็อกขาออกยังค้างอยู่", outputsLockedByFull());
+  check("Counting ยังค้างที่เลขเดิม", countingValue == 3);
   countOnePiece();
-  check("รับเพิ่มได้อีก 1 ชิ้น", countingValue == 4);
-  check("เกินเป้าแล้ว -> กลับมา Full ทันที", fullCounterFlag);
+  check("รับงานเพิ่มไม่ได้แม้กด A0", countingValue == 3);
+  check("ขา D9 ยังเงียบหลังกด A0", !outputD9Active());
+  check("ขา D12 ยังเงียบหลังกด A0", !outputD12Active());
 
   std::cout << "\n=== สถานการณ์ที่ 5: ปลด Full แล้วต้องไม่มีการนับผีจาก falling edge ค้าง ===\n";
   resetState();
@@ -101,7 +103,7 @@ int main() {
   check("ถึง Full ก่อน", fullCounterFlag);
   ledMonitorOn = true; lastLedMonitorOn = true;   // D9 ค้างติดตอนเข้า Full
   handleColorMonitor();                            // โดนบล็อก + ล้างสถานะ
-  doSystemReset();                                 // ปลด Full
+  doCountingReset();                               // A7 ปลด Full
   int countingAfterReset = countingValue;
   handleColorMonitor();                            // รอบแรกหลังปลด
   check("ไม่มีการนับผีเพิ่มเองหลังปลด Full", countingValue == countingAfterReset);
@@ -116,8 +118,8 @@ int main() {
   check("D9 ต้องดับระหว่าง Full", !outputD9Active());
   check("D11 ต้องดับระหว่าง Full แม้ไฟ OK ค้างจากชิ้นที่ทำให้ครบเป้า", !outputD11Active());
   // ค่าที่ส่งขึ้นเว็บใช้ตัวเดียวกัน ไฟหน้าเครื่องกับหน้าเว็บจึงตรงกันเสมอ
-  doSystemReset();
-  check("ปลด Full แล้ว NG/LOCK ถูกเคลียร์ไปด้วย -> D12 ยังดับ", !outputD12Active());
+  doCountingReset();
+  check("A7 ปลดล็อกแล้ว NG/LOCK ที่ค้างยังโชว์ได้ตามจริง", outputD12Active());
 
   // ชิ้นที่ทำให้ครบเป้าจุด D11 ก่อนแล้วค่อย Full ในจังหวะเดียวกัน
   // ไฟ OK ต้องไม่ค้างสว่างหลังจากนั้น
@@ -139,7 +141,7 @@ int main() {
   ledMonitorOn = false; ledOkOn = true;
   check("ไม่ Full + ผลเป็น OK -> D11 ติดตามปกติ", outputD11Active());
 
-  std::cout << "\n=== สถานการณ์ที่ 7: A7/RESET_COUNT ยังล้าง Counting เริ่มรอบใหม่ได้ตามเดิม ===\n";
+  std::cout << "\n=== สถานการณ์ที่ 7 (เดิม): A7/RESET_COUNT ยังล้าง Counting เริ่มรอบใหม่ได้ตามเดิม ===\n";
   resetState();
   countOnePiece(); countOnePiece(); countOnePiece();
   check("ถึง Full ก่อน", fullCounterFlag);
@@ -149,6 +151,38 @@ int main() {
   countOnePiece();
   check("รับงานรอบใหม่ได้ปกติ", countingValue == 1);
   check("ยังไม่ Full เพราะเพิ่งเริ่มรอบ", !fullCounterFlag);
+
+  std::cout << "\n=== สถานการณ์ที่ 9: ล็อกค้างจนกว่า A7 จะมา ===\n";
+  resetState();
+  countOnePiece(); countOnePiece(); countOnePiece();
+  check("D6 เริ่มทำงาน -> ตัวล็อกถูกตั้ง", fullOutputLock);
+
+  // ล็อกต้องค้างข้ามทุกจังหวะกะพริบของ D6 ไม่ใช่ล็อกเฉพาะตอน D6 = HIGH
+  for (int i = 0; i < 6; i++)
+  {
+    FAKE_MS += D6_BLINK_INTERVAL_MS + 1;
+    handleFullCounterBlinkOutput();
+    ledMonitorOn = true; ledNgOn = true;          // จำลองผลตรวจที่พยายามจะออก
+    applyIndicatorOutputs();
+    check("ทุกจังหวะกะพริบ D6 -> ขา D9 เงียบ", pinLevel[LED_MONITOR] == LOW);
+    check("ทุกจังหวะกะพริบ D6 -> ขา D12 เงียบ", pinLevel[LED_NG] == LOW);
+  }
+
+  // A0 กดกี่ครั้งก็ปลดไม่ได้
+  doSystemReset();
+  doSystemReset();
+  applyIndicatorOutputs();
+  check("กด A0 ซ้ำ ก็ยังล็อกอยู่", outputsLockedByFull());
+  check("กด A0 ซ้ำ ขา D9 ยังเงียบ", pinLevel[LED_MONITOR] == LOW);
+
+  // A7 คือทางเดียวที่ปลดได้
+  doCountingReset();
+  check("A7 ปลดล็อกแล้ว", !outputsLockedByFull());
+  check("A7 ล้าง Counting เริ่มรอบใหม่", countingValue == 0);
+  ledMonitorOn = true; ledNgOn = true;
+  applyIndicatorOutputs();
+  check("หลัง A7 ขา D9 กลับมาทำงาน", pinLevel[LED_MONITOR] == HIGH);
+  check("หลัง A7 ขา D12 กลับมาทำงาน", pinLevel[LED_NG] == HIGH);
 
   std::cout << "\n=== สถานการณ์ที่ 8: ขาจริง D9/D11/D12 ต้องไม่มีสัญญาณตอน D5/D6 ทำงาน ===\n";
   resetState();
