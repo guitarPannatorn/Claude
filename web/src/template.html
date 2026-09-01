@@ -864,10 +864,12 @@ class Component extends DCLogic {
     const locked = d.d12 === true;
     const wasLocked = this.state.lockStart !== null;
     if (locked && !wasLocked) this.alarm();
-    // ใช้เวลาที่แถวถูกอัปเดตจริงใน Supabase (updated_at) ไม่ใช่เวลาที่เว็บ query
-    // สำเร็จ (Date.now()) — ไม่งั้นต่อให้บอร์ดหลุดไปแล้ว เว็บ poll ทุก 60 วิ
-    // ก็ยังอ่านแถวเก่าซ้ำได้สำเร็จเรื่อยๆ แล้วเข้าใจผิดว่า "เชื่อมต่ออยู่" ตลอด
-    const lastConn = d.updated_at ? new Date(d.updated_at).getTime() : this.state.lastConn;
+    // ใช้ device_seen_at (เวลาที่ ESP32 อัปโหลดสถานะจริงล่าสุด) ไม่ใช่เวลาที่
+    // เว็บ query สำเร็จ (Date.now()) และไม่ใช่ updated_at เฉยๆ ด้วย เพราะ
+    // updated_at ขยับได้จากปุ่มรีเซ็ตบนเว็บที่อัปเดตแบบ optimistic โดยไม่รอ
+    // เครื่องตอบกลับ — ถ้าใช้ updated_at จะกดรีเซ็ตตอนเครื่องออฟไลน์แล้วเข้าใจผิด
+    // ว่า "เชื่อมต่อกลับมาแล้ว" ทั้งที่ยังไม่ได้เชื่อมจริง (ดู sql/03_status_device_seen_at.sql)
+    const lastConn = d.device_seen_at ? new Date(d.device_seen_at).getTime() : this.state.lastConn;
     this.setState({ status: d, lastConn: lastConn, lockStart: locked ? (this.state.lockStart || Date.now()) : null, lockSecs: locked ? this.state.lockSecs : 0 });
   }
   push(arr, v) { arr.push(v); if (arr.length > 24) arr.shift(); }
