@@ -864,7 +864,11 @@ class Component extends DCLogic {
     const locked = d.d12 === true;
     const wasLocked = this.state.lockStart !== null;
     if (locked && !wasLocked) this.alarm();
-    this.setState({ status: d, lastConn: Date.now(), lockStart: locked ? (this.state.lockStart || Date.now()) : null, lockSecs: locked ? this.state.lockSecs : 0 });
+    // ใช้เวลาที่แถวถูกอัปเดตจริงใน Supabase (updated_at) ไม่ใช่เวลาที่เว็บ query
+    // สำเร็จ (Date.now()) — ไม่งั้นต่อให้บอร์ดหลุดไปแล้ว เว็บ poll ทุก 60 วิ
+    // ก็ยังอ่านแถวเก่าซ้ำได้สำเร็จเรื่อยๆ แล้วเข้าใจผิดว่า "เชื่อมต่ออยู่" ตลอด
+    const lastConn = d.updated_at ? new Date(d.updated_at).getTime() : this.state.lastConn;
+    this.setState({ status: d, lastConn: lastConn, lockStart: locked ? (this.state.lockStart || Date.now()) : null, lockSecs: locked ? this.state.lockSecs : 0 });
   }
   push(arr, v) { arr.push(v); if (arr.length > 24) arr.shift(); }
 
