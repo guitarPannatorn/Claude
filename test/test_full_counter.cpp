@@ -99,7 +99,28 @@ int main() {
   handleColorMonitor();                            // รอบแรกหลังปลด
   check("ไม่มีการนับผีเพิ่มเองหลังปลด Full", countingValue == countingAfterReset);
 
-  std::cout << "\n=== สถานการณ์ที่ 6: A7/RESET_COUNT ยังล้าง Counting เริ่มรอบใหม่ได้ตามเดิม ===\n";
+  std::cout << "\n=== สถานการณ์ที่ 6: Full แล้วต้องไม่แสดงผลที่ D9 / D12 ===\n";
+  resetState();
+  countOnePiece(); countOnePiece(); countOnePiece();
+  check("ถึง Full ก่อน", fullCounterFlag);
+  // จำลอง NG/LOCK ที่ค้างมาก่อนหน้า - ต้องไม่โผล่ออกที่ D12 ระหว่าง Full
+  ledNgOn = true; autoFailLock = true; ledMonitorOn = true;
+  check("D12 ต้องดับระหว่าง Full แม้มี NG/LOCK ค้าง", !outputD12Active());
+  check("D9 ต้องดับระหว่าง Full", !outputD9Active());
+  // ค่าที่ส่งขึ้นเว็บใช้ตัวเดียวกัน ไฟหน้าเครื่องกับหน้าเว็บจึงตรงกันเสมอ
+  doSystemReset();
+  check("ปลด Full แล้ว NG/LOCK ถูกเคลียร์ไปด้วย -> D12 ยังดับ", !outputD12Active());
+
+  // NG ที่เกิดตอนไม่ Full ต้องยังโชว์ที่ D12 ตามปกติ
+  resetState();
+  ledNgOn = true;
+  check("ไม่ Full + มี NG -> D12 ติดตามปกติ", outputD12Active());
+  ledNgOn = false; autoFailLock = true;
+  check("ไม่ Full + auto lock -> D12 ติดตามปกติ", outputD12Active());
+  autoFailLock = false; ledMonitorOn = true;
+  check("ไม่ Full + เห็นสีครบ -> D9 ติดตามปกติ", outputD9Active());
+
+  std::cout << "\n=== สถานการณ์ที่ 7: A7/RESET_COUNT ยังล้าง Counting เริ่มรอบใหม่ได้ตามเดิม ===\n";
   resetState();
   countOnePiece(); countOnePiece(); countOnePiece();
   check("ถึง Full ก่อน", fullCounterFlag);

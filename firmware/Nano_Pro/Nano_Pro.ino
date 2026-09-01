@@ -738,9 +738,22 @@ void handleOkAutoOff()
 // D12 OUTPUT รวมสถานะ
 // ================================================================
 
+// ครบเป้าแล้วต้องไม่โชว์ผลตรวจที่ D9/D12 เลย ทั้งขาออกจริงและค่าที่ส่งขึ้นเว็บ
+// (สถานะ NG/LOCK ข้างในยังจำไว้เหมือนเดิม พอกด RESET ปลด Full ถึงกลับมาแสดงตามจริง)
+// ใช้ตัวเดียวกันทั้ง 2 ที่ เพื่อไม่ให้ไฟที่หน้าเครื่องกับที่หน้าเว็บขัดกัน
+bool outputD9Active()
+{
+  return !fullCounterFlag && ledMonitorOn;
+}
+
+bool outputD12Active()
+{
+  return !fullCounterFlag && (ledNgOn || autoFailLock);
+}
+
 void handleNgOutput()
 {
-  digitalWrite(LED_NG, (ledNgOn || autoFailLock) ? HIGH : LOW);
+  digitalWrite(LED_NG, outputD12Active() ? HIGH : LOW);
 }
 
 
@@ -755,11 +768,9 @@ void handleColorMonitor()
   // และ Auto Assessment ที่จะตัดสินเป็น NG เมื่อเห็นสีเดียวครบ 5 วินาที
   if (fullCounterFlag)
   {
-    if (ledMonitorOn)
-    {
-      digitalWrite(LED_MONITOR, LOW);
-      ledMonitorOn = false;
-    }
+    // บังคับดับ D9 ทุกรอบ ไม่ใช่ดับครั้งเดียวตอนเข้า Full
+    digitalWrite(LED_MONITOR, LOW);
+    ledMonitorOn = false;
 
     // ต้องล้างด้วย ไม่งั้นตอนกด RESET ปลด Full ปุ๊บ checkD9FallingEdge()
     // จะเห็นเป็น falling edge ค้างจากก่อนหน้า แล้วนับเพิ่มให้เองทันที 1 ชิ้น
@@ -1333,13 +1344,13 @@ void handleEspSend()
   espSerial.print(countingValue);
 
   espSerial.print(F(",\"d9\":"));
-  espSerial.print(ledMonitorOn ? 1 : 0);
+  espSerial.print(outputD9Active() ? 1 : 0);
 
   espSerial.print(F(",\"d11\":"));
   espSerial.print(ledOkOn ? 1 : 0);
 
   espSerial.print(F(",\"d12\":"));
-  espSerial.print((ledNgOn || autoFailLock) ? 1 : 0);
+  espSerial.print(outputD12Active() ? 1 : 0);
 
   espSerial.print(F(",\"lockOld\":"));
   espSerial.print(ledNgOn ? 1 : 0);
