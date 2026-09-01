@@ -444,11 +444,45 @@ void pulseCommandPin(int pin, const char* label)
 
 
 // ================================================================
+// แจ้งใน Serial Monitor เสมอว่า "สั่ง Reset จากไหน" ไม่ว่าจะมาจากปุ่มเว็บ
+// หรือสแกนบัตร RFID เพื่อไล่ debug ได้ง่ายว่ามีการสั่งงานจริงหรือไม่
+// ================================================================
+void logResetTrigger(const char* source, const String& detail)
+{
+  Serial.println();
+  Serial.print(F("### RESET TRIGGER -> ต้นตอ: "));
+  Serial.print(source);
+  Serial.print(F(" | "));
+  Serial.println(detail);
+}
+
+
+// ================================================================
 // RFID: สแกนบัตรใบไหนก็ได้ = สั่ง Reset A0 (เคลียร์ NG/LOCK)
 // ================================================================
 
+// เช็คว่าโมดูล RC522 ยังตอบสนองอยู่ไหม เรียกเป็นระยะเพื่อจับกรณีโมดูล
+// หลุด/ไฟตกกลางทาง (ตอน setup() เช็คแค่ครั้งเดียวตอนบูต ไม่รู้ว่าหลุดทีหลัง)
+unsigned long lastRfidHealthCheck = 0;
+const unsigned long RFID_HEALTH_CHECK_INTERVAL_MS = 10000;
+
+void checkRfidModuleHealth()
+{
+  if (millis() - lastRfidHealthCheck < RFID_HEALTH_CHECK_INTERVAL_MS) return;
+  lastRfidHealthCheck = millis();
+
+  byte version = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+
+  if (version == 0x00 || version == 0xFF)
+  {
+    Serial.println(F("[RFID] *** ไม่ตอบสนอง — ตรวจสาย SPI/ไฟ 3.3V (โมดูลอาจหลุดหรือพัง) ***"));
+  }
+}
+
 void handleRfidScan()
 {
+  checkRfidModuleHealth();
+
   // กันสแกนซ้ำถี่เกินไป
   if (millis() - lastCardScanTime < CARD_SCAN_LOCKOUT_MS)
   {
@@ -460,8 +494,11 @@ void handleRfidScan()
     return;
   }
 
+  Serial.println(F("[RFID] ตรวจพบบัตรในสนามเสาอากาศ กำลังอ่าน UID..."));
+
   if (!rfid.PICC_ReadCardSerial())
   {
+    Serial.println(F("[RFID] เจอบัตรแต่อ่าน UID ไม่สำเร็จ (บัตรขยับเร็วไป/สัญญาณรบกวน) — ลองแตะค้างใกล้ๆ ใหม่"));
     return;
   }
 
@@ -478,10 +515,10 @@ void handleRfidScan()
 
   uid.toUpperCase();
 
-  Serial.println();
-  Serial.print(F("สแกนบัตร UID: "));
+  Serial.print(F("[RFID] อ่าน UID สำเร็จ: "));
   Serial.println(uid);
-  Serial.println(F("อนุญาต -> สั่ง Reset A0 (เคลียร์ NG/LOCK)"));
+
+  logResetTrigger("RFID", "สแกนบัตร UID " + uid + " -> เคลียร์ NG/LOCK (A0)");
 
   // สั่ง Reset เฉพาะ A0 เท่านั้น
   pulseCommandPin(PIN_CMD_RESET_NG, "A0 (เคลียร์ NG/LOCK)");
@@ -490,6 +527,10 @@ void handleRfidScan()
   if (WiFi.status() == WL_CONNECTED)
   {
     logEventToSupabase(("card_reset:" + uid).c_str());
+  }
+  else
+  {
+    Serial.println(F("[RFID] WiFi หลุดอยู่ - สั่ง Reset A0 ไปแล้วแต่บันทึก card_reset ขึ้น Supabase ไม่ได้"));
   }
 
   rfid.PICC_HaltA();
@@ -579,10 +620,22 @@ void readFromNano()
           pushEvent(ev);
           forceUploadNow = true;   // มี event จริง ต้องรีบส่งขึ้นเว็บ
 
+          // ขึ้นสถานะ NG ให้เห็นชัดใน Serial Monitor ทันทีที่ Nano รายงานมา
+          // (ng_missX / auto_fail_missX ฯลฯ — ดู ngEventName() ใน Nano_Pro.ino)
+          if (ev.startsWith("ng") || ev.startsWith("auto_fail"))
+          {
+            Serial.print(F(">>> NG จาก Nano — event="));
+            Serial.println(ev);
+          }
+
           // ถ้าเป็นตัวยืนยันรีเซ็ตยอดรวม เลิกพักอัปโหลด ปล่อยค่า 0 ที่ถูกต้อง
           // ขึ้น Supabase ได้เลย (forceUploadNow ตั้งไว้แล้วข้างบน จึงอัปโหลด
           // โดยไม่ต้องรอรอบถัดไป)
-          clearResetSuppressionIfConfirmed(ev);
+          if (clearResetSuppressionIfConfirmed(ev))
+          {
+            Serial.print(F("[Nano] ยืนยันรีเซ็ตแล้ว — event="));
+            Serial.println(ev);
+          }
         }
       }
 
@@ -793,17 +846,17 @@ void checkPendingCommands()
       {
         if (strcmp(cmd, "RESET") == 0)
         {
+          logResetTrigger("WEB", "RESET (เคลียร์ NG/LOCK)");
           Serial2.print("RESET\n");
-          Serial.println(F("-> Nano: RESET (เคลียร์ NG/LOCK จากเว็บ)"));
         }
         else if (strcmp(cmd, "RESET_COUNT") == 0)
         {
+          logResetTrigger("WEB", "RESET_COUNT (เคลียร์ Counting)");
           Serial2.print("RESET_COUNT\n");
-          Serial.println(F("-> Nano: RESET_COUNT (เคลียร์ Counting จากเว็บ)"));
         }
         else if (strcmp(cmd, "RESET_TOTAL") == 0)
         {
-          Serial.println(F("-> Nano: RESET_TOTAL (ล้างยอดรวมสะสม OK/NG)"));
+          logResetTrigger("WEB", "RESET_TOTAL (ล้างยอดรวมสะสม OK/NG)");
 
           // ส่งคำสั่ง + พักอัปโหลดสถานะไว้ก่อน กันค่าเก่าทับค่า 0 ที่เว็บ
           // เพิ่งตั้งใน Supabase แล้วส่งซ้ำเป็นระยะจนกว่า Nano จะยืนยัน
@@ -812,7 +865,7 @@ void checkPendingCommands()
         }
         else if (strcmp(cmd, "FACTORY_RESET") == 0)
         {
-          Serial.println(F("-> Nano: FACTORY_RESET (คืนค่าทั้งหมด)"));
+          logResetTrigger("WEB", "FACTORY_RESET (คืนค่าทั้งหมด)");
 
           armResetSuppression("FACTORY_RESET\n");
         }
