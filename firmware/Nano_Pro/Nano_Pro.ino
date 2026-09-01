@@ -43,7 +43,7 @@
 
 // พิมพ์ออก Serial ตอนบูต ใช้ยืนยันว่าบอร์ดกำลังรันไฟล์เวอร์ชันไหนอยู่จริง
 // (ตัวที่มีตัวมาสก์ D9/D11/D12 ตอน Full counter คือ 2026.09.01-full-mask)
-#define FW_VERSION "2026.09.01-full-mask"
+#define FW_VERSION "2026.09.01-full-mask-b"
 
 
 // ================================================================
@@ -124,7 +124,7 @@ const unsigned long NG_DELAY_MS = 500;
 // ================================================================
 
 unsigned long lastCamCheckTime = 0;
-const unsigned long CAM_CHECK_INTERVAL = 2000;
+const unsigned long CAM_CHECK_INTERVAL = 500;
 
 unsigned long lastMonitorCheckTime = 0;
 const unsigned long MONITOR_CHECK_INTERVAL = 150;
@@ -151,7 +151,7 @@ const unsigned long COLOR_LOSS_TIMEOUT_MS = 400;
 
 bool autoTimerActive = false;
 unsigned long autoTimerStart = 0;
-const unsigned long AUTO_TIMEOUT_MS = 5000;
+const unsigned long AUTO_TIMEOUT_MS = 3000;
 
 bool autoFailLock = false;
 
@@ -448,9 +448,9 @@ void doSystemReset()
   applyIndicatorOutputs();
 
   unsigned long resetTime = millis();
-  while (millis() - resetTime < 700)
+  while (millis() - resetTime < 200)
   {
-    // รอ 700ms
+    // รอ 200ms
   }
 
   Serial.println(F("RESET (A0) เสร็จสิ้น"));
