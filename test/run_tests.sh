@@ -37,6 +37,16 @@ g++ -std=c++11 -I"$BUILD" -o "$BUILD/test" "$BUILD/test_auto_assessment.cpp"
 "$BUILD/test"
 
 # ---------------------------------------------------------------
+# เทสต์เงื่อนไข Full counter (ครบเป้าแล้วต้องกด RESET ก่อนถึงรับงานต่อ)
+# ใช้ sketch.cpp ตัวเดียวกับข้างบน แต่คอมไพล์เป็นไบนารีแยก
+# ---------------------------------------------------------------
+cp "$ROOT"/test/test_full_counter.cpp "$BUILD/"
+
+echo "== รันเทสต์ Nano: Full counter ต้องกด RESET ก่อนรับงานต่อ =="
+g++ -std=c++11 -I"$BUILD" -o "$BUILD/test_full" "$BUILD/test_full_counter.cpp"
+"$BUILD/test_full"
+
+# ---------------------------------------------------------------
 # เทสต์คิว event ของ ESP32
 # ตัดเฉพาะส่วนคิวออกมาจาก .ino จริง (ตั้งแต่ #define EVENT_QUEUE_SIZE
 # ถึงท้าย drainEventQueue) แล้วคอมไพล์กับ stub เพื่อไม่ต้องมีไลบรารี ESP32

@@ -415,6 +415,20 @@ void doSystemReset()
 
   Serial.println(F("D12 OFF / ปลด Lock ทั้งระบบเก่าและ Auto"));
 
+  // ปลด Full counter ด้วย เพื่อให้รับงานต่อได้โดยไม่ต้องล้าง Counting ทิ้ง
+  // (ต่างจาก A7/RESET_COUNT ที่ล้าง Counting = 0 เพื่อเริ่มรอบใหม่)
+  // หมายเหตุ: Counting ยังค้างที่เลขเดิม พอนับเพิ่มอีกชิ้นก็จะถึงเป้าและ
+  // ขึ้น Full อีกครั้งทันที = กด RESET หนึ่งครั้งได้เพิ่มหนึ่งชิ้น
+  if (fullCounterFlag)
+  {
+    fullCounterFlag = false;
+
+    digitalWrite(PIN_FULL_OUT, LOW);
+    digitalWrite(PIN_FULL_OUT_BLINK, LOW);
+
+    Serial.println(F("ปลด Full counter -> รับงานต่อได้อีก (Counting ยังค้างที่เลขเดิม)"));
+  }
+
   lastEventMsg = "reset_ng";
 
   unsigned long resetTime = millis();
@@ -533,7 +547,11 @@ void handleStartButton()
       Serial.println();
       Serial.println(F("START"));
 
-      if (ledNgOn)
+      if (fullCounterFlag)
+      {
+        Serial.println(F("Full counter - รับงานต่อไม่ได้ ต้องกด RESET ก่อน"));
+      }
+      else if (ledNgOn)
       {
         Serial.println(F("ระบบ LOCK - กรุณากด RESET ก่อน"));
       }
@@ -732,6 +750,25 @@ void handleNgOutput()
 
 void handleColorMonitor()
 {
+  // ครบเป้าแล้ว = หยุดรับงานทุกทาง ต้องกด RESET ก่อนถึงจะตรวจต่อได้
+  // บล็อกตรงนี้จุดเดียวครอบคลุมทั้งการนับอัตโนมัติจาก D9 falling edge
+  // และ Auto Assessment ที่จะตัดสินเป็น NG เมื่อเห็นสีเดียวครบ 5 วินาที
+  if (fullCounterFlag)
+  {
+    if (ledMonitorOn)
+    {
+      digitalWrite(LED_MONITOR, LOW);
+      ledMonitorOn = false;
+    }
+
+    // ต้องล้างด้วย ไม่งั้นตอนกด RESET ปลด Full ปุ๊บ checkD9FallingEdge()
+    // จะเห็นเป็น falling edge ค้างจากก่อนหน้า แล้วนับเพิ่มให้เองทันที 1 ชิ้น
+    lastLedMonitorOn = false;
+    autoTimerActive = false;
+
+    return;
+  }
+
   unsigned long now = millis();
 
   if (now - lastMonitorCheckTime < MONITOR_CHECK_INTERVAL)
@@ -1027,7 +1064,12 @@ void triggerCountFromD11()
 
 void incrementCounting()
 {
-  if (fullCounterFlag) return;
+  // กันชั้นสุดท้าย - ครอบคลุมปุ่มนับมือ A6 ที่ไม่ได้ผ่าน handleColorMonitor()
+  if (fullCounterFlag)
+  {
+    Serial.println(F("Full counter - ไม่นับเพิ่ม ต้องกด RESET ก่อน"));
+    return;
+  }
 
   countingValue++;
 
