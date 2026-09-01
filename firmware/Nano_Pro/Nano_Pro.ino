@@ -334,8 +334,6 @@ void loop()
   handleOkAutoOff();
   handleNgDelay();
   handleColorMonitor();
-  handleNgOutput();
-  handleOkOutput();
 
   handleSettingButtons();
   handleCountingButtonManual();
@@ -347,6 +345,10 @@ void loop()
 
   handleEspReceive();
   handleEspSend();
+
+  // เขียนขา D9/D11/D12 ปิดท้ายทุกรอบ หลังทุกฟังก์ชันอัปเดตสถานะเสร็จแล้ว
+  // จึงไม่มีทางที่ขาไหนจะค้างสวนกับสถานะจริงข้ามรอบ loop
+  applyIndicatorOutputs();
 }
 
 
@@ -407,7 +409,6 @@ void doSystemReset()
   ledNgOn = false;
   ngDelayActive = false;
 
-  digitalWrite(LED_OK, LOW);
   ledOkOn = false;
   okTimerActive = false;
 
@@ -431,6 +432,9 @@ void doSystemReset()
   }
 
   lastEventMsg = "reset_ng";
+
+  // ข้างล่างมีหน่วง 700ms ที่ไม่ได้กลับเข้า loop จึงต้องเขียนขาให้ตรงสถานะเดี๋ยวนี้
+  applyIndicatorOutputs();
 
   unsigned long resetTime = millis();
   while (millis() - resetTime < 700)
@@ -503,15 +507,14 @@ void doFactoryReset()
   ngDelayActive = false;
   autoFailLock = false;
   autoTimerActive = false;
-  digitalWrite(LED_NG, LOW);
 
-  digitalWrite(LED_OK, LOW);
   ledOkOn = false;
   okTimerActive = false;
 
-  digitalWrite(LED_MONITOR, LOW);
   ledMonitorOn = false;
   lastLedMonitorOn = false;
+
+  applyIndicatorOutputs();
 
   // ปลดล็อกการนับซ้ำ ไม่ให้ค้างจากรอบก่อนหน้า
   lastCountTriggerTime = millis() - COUNT_TRIGGER_LOCKOUT_MS;
@@ -562,7 +565,6 @@ void handleStartButton()
       }
       else
       {
-        digitalWrite(LED_OK, LOW);
         ledOkOn = false;
         okTimerActive = false;
 
@@ -648,7 +650,6 @@ void setResultOK()
 {
   ngDelayActive = false;
 
-  digitalWrite(LED_OK, HIGH);
   ledOkOn = true;
 
   ledNgOn = false;
@@ -675,7 +676,6 @@ String ngEventName(const char* prefix, bool found1, bool found2)
 // จึงส่งแค่ "ng" เฉยๆ ไม่เดาว่าหายทั้งสองสี
 void setResultNG(bool found1, bool found2, bool idsKnown)
 {
-  digitalWrite(LED_OK, LOW);
   ledOkOn = false;
   okTimerActive = false;
 
@@ -706,7 +706,6 @@ void handleNgDelay()
 
     ledNgOn = true;
 
-    digitalWrite(LED_OK, LOW);
     ledOkOn = false;
     okTimerActive = false;
 
@@ -725,8 +724,6 @@ void handleOkAutoOff()
 
   if (millis() >= okOffTime)
   {
-    digitalWrite(LED_OK, LOW);
-
     ledOkOn = false;
     okTimerActive = false;
 
@@ -758,16 +755,16 @@ bool outputD12Active()
   return !fullCounterFlag && (ledNgOn || autoFailLock);
 }
 
-void handleNgOutput()
+// ประตูเดียวที่เขียนขา D9/D11/D12 ได้
+// ห้ามฟังก์ชันอื่น digitalWrite() ขาสามขานี้เองเด็ดขาด ให้แก้แค่ตัวแปรสถานะ
+// (ledMonitorOn / ledOkOn / ledNgOn / autoFailLock) แล้วปล่อยให้ตรงนี้เขียนขา
+// ของเดิมกระจายอยู่หลายที่ พอครบเป้าแล้วบางเส้นทางยังจุดไฟทับได้ในรอบเดียวกัน
+// ทำให้ D9/D12 ยังมีสัญญาณออกทั้งที่ D6 กำลังกะพริบอยู่
+void applyIndicatorOutputs()
 {
-  digitalWrite(LED_NG, outputD12Active() ? HIGH : LOW);
-}
-
-// ชิ้นที่ทำให้ครบเป้าจะจุด D11 ก่อน แล้วค่อยตั้ง Full ในจังหวะเดียวกัน
-// จึงต้องมีตัวไล่ดับทุกรอบแบบเดียวกับ D12 ไม่งั้นไฟ OK จะค้างสว่างตอน Full
-void handleOkOutput()
-{
-  digitalWrite(LED_OK, outputD11Active() ? HIGH : LOW);
+  digitalWrite(LED_MONITOR, outputD9Active()  ? HIGH : LOW);
+  digitalWrite(LED_OK,      outputD11Active() ? HIGH : LOW);
+  digitalWrite(LED_NG,      outputD12Active() ? HIGH : LOW);
 }
 
 
@@ -782,8 +779,8 @@ void handleColorMonitor()
   // และ Auto Assessment ที่จะตัดสินเป็น NG เมื่อเห็นสีเดียวครบ 5 วินาที
   if (fullCounterFlag)
   {
-    // บังคับดับ D9 ทุกรอบ ไม่ใช่ดับครั้งเดียวตอนเข้า Full
-    digitalWrite(LED_MONITOR, LOW);
+    // ดับสถานะ D9 ทุกรอบ ไม่ใช่ดับครั้งเดียวตอนเข้า Full
+    // (ขาจริงถูกเขียนที่ applyIndicatorOutputs() ปลายทาง)
     ledMonitorOn = false;
 
     // ต้องล้างด้วย ไม่งั้นตอนกด RESET ปลด Full ปุ๊บ checkD9FallingEdge()
@@ -815,7 +812,6 @@ void handleColorMonitor()
     if (camFailStreak == CAM_FAIL_LIMIT)
     {
       // กล้องหลุดจริง -> ดับ D9 และหยุดจับเวลา แต่ไม่ตัดสินผลเป็น NG
-      digitalWrite(LED_MONITOR, LOW);
       ledMonitorOn = false;
       lastLedMonitorOn = false;   // กันไม่ให้เกิด falling edge หลอกๆ แล้วนับเพิ่ม
       autoTimerActive = false;
@@ -845,7 +841,6 @@ void handleColorMonitor()
   }
   else
   {
-    digitalWrite(LED_MONITOR, LOW);
     ledMonitorOn = false;
   }
 
@@ -873,8 +868,6 @@ void updateD9Hold(bool found1, bool found2, unsigned long now)
       }
     }
   }
-
-  digitalWrite(LED_MONITOR, ledMonitorOn ? HIGH : LOW);
 }
 
 
@@ -948,7 +941,6 @@ void handleAutoAssessment(bool found1, bool found2, unsigned long now)
     autoFailLock = true;
     autoTimerActive = false;
 
-    digitalWrite(LED_MONITOR, LOW);
     ledMonitorOn = false;
 
     countNgTotal++;
@@ -1116,6 +1108,10 @@ void incrementCounting()
     fullCounterFlag = true;
     lastEventMsg = "full_counter";
     Serial.println(F("FULL COUNTER"));
+
+    // ครบเป้าปุ๊บ ดับ D9/D11/D12 ทันทีในจังหวะเดียวกับที่ D5/D6 ติด
+    // ไม่ต้องรอจนจบรอบ loop เผื่อเส้นทางที่เรียกมามีงานยาวคั่นอยู่
+    applyIndicatorOutputs();
 
     // ครบเป้าแล้วเป็นจุดสำคัญ บันทึกยอดรวมทันทีไม่ต้องรอรอบหน่วงเวลา
     saveTotalsToEEPROM();

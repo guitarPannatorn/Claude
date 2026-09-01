@@ -13,7 +13,12 @@
 #include "EEPROM.h"
 SerialClass Serial;
 EEPROMClass EEPROM;
-void pinMode(int,int){} void digitalWrite(int,int){}
+void pinMode(int,int){}
+// จำระดับล่าสุดของทุกขา เพื่อเช็ค "ขาจริง" ไม่ใช่แค่ตัวแปรสถานะ
+// ของเดิม stub ตัวนี้เป็นฟังก์ชันเปล่า เทสต์จึงมองไม่เห็นเลยว่ามีโค้ดเส้นไหน
+// แอบจุดไฟ D9/D11/D12 ทับระหว่าง Full counter
+int pinLevel[32];
+void digitalWrite(int pin, int level){ if (pin >= 0 && pin < 32) pinLevel[pin] = level; }
 int digitalRead(int){return 1;} int analogRead(int){return 1023;}
 void delay(unsigned long){}
 unsigned long FAKE_MS = 0;
@@ -144,6 +149,57 @@ int main() {
   countOnePiece();
   check("รับงานรอบใหม่ได้ปกติ", countingValue == 1);
   check("ยังไม่ Full เพราะเพิ่งเริ่มรอบ", !fullCounterFlag);
+
+  std::cout << "\n=== สถานการณ์ที่ 8: ขาจริง D9/D11/D12 ต้องไม่มีสัญญาณตอน D5/D6 ทำงาน ===\n";
+  resetState();
+  countOnePiece(); countOnePiece(); countOnePiece();
+  check("ถึง Full ก่อน", fullCounterFlag);
+
+  // สภาพที่หนักที่สุด: ค้างทั้ง OK, NG, LOCK และ D9 มาจากก่อนเข้า Full
+  ledOkOn = true; ledNgOn = true; autoFailLock = true; ledMonitorOn = true;
+
+  // เรียกเส้นทางที่เคย digitalWrite ขาสามขานี้เองก่อน แล้วค่อยจบด้วยตัวเขียนขา
+  // เหมือนลำดับใน loop() จริง
+  handleColorMonitor();
+  handleNgDelay();
+  handleOkAutoOff();
+  handleFullCounterOutput();
+  handleFullCounterBlinkOutput();
+  applyIndicatorOutputs();
+
+  check("ขา D5 (Full) มีสัญญาณออก", pinLevel[PIN_FULL_OUT] == HIGH);
+  check("ขา D9 ไม่มีสัญญาณออก", pinLevel[LED_MONITOR] == LOW);
+  check("ขา D11 ไม่มีสัญญาณออก", pinLevel[LED_OK] == LOW);
+  check("ขา D12 ไม่มีสัญญาณออก", pinLevel[LED_NG] == LOW);
+
+  // จังหวะที่ D6 กะพริบเป็น HIGH พอดี ขาสามขานั้นก็ยังต้องเงียบ
+  FAKE_MS += D6_BLINK_INTERVAL_MS + 1;
+  handleFullCounterBlinkOutput();
+  if (pinLevel[PIN_FULL_OUT_BLINK] == LOW)
+  {
+    FAKE_MS += D6_BLINK_INTERVAL_MS + 1;
+    handleFullCounterBlinkOutput();
+  }
+  applyIndicatorOutputs();
+  check("จับจังหวะ D6 = HIGH ได้จริง", pinLevel[PIN_FULL_OUT_BLINK] == HIGH);
+  check("D6 HIGH -> D9 ยังเงียบ", pinLevel[LED_MONITOR] == LOW);
+  check("D6 HIGH -> D12 ยังเงียบ", pinLevel[LED_NG] == LOW);
+
+  // เส้นทางตัดสินผลที่เคยจุดไฟ OK ที่ขาโดยตรง ก็ต้องไม่ทะลุออกมาระหว่าง Full
+  setResultOK();
+  check("setResultOK ระหว่าง Full -> ขา D11 ยังเงียบ", pinLevel[LED_OK] == LOW);
+  countNgTotal = 0;
+  setResultNG(true, false, true);
+  applyIndicatorOutputs();
+  check("setResultNG ระหว่าง Full -> ขา D12 ยังเงียบ", pinLevel[LED_NG] == LOW);
+
+  // ปลด Full แล้วขาต้องกลับมาทำงานตามผลตรวจจริงเหมือนเดิม
+  resetState();
+  ledNgOn = true; ledMonitorOn = true; ledOkOn = true;
+  applyIndicatorOutputs();
+  check("ไม่ Full -> ขา D12 ทำงานตามปกติ", pinLevel[LED_NG] == HIGH);
+  check("ไม่ Full -> ขา D9 ทำงานตามปกติ", pinLevel[LED_MONITOR] == HIGH);
+  check("ไม่ Full -> ขา D11 ทำงานตามปกติ", pinLevel[LED_OK] == HIGH);
 
   std::cout << (fails ? "\n>>> มีข้อที่ไม่ผ่าน: " : "\n>>> ผ่านทั้งหมด ") << fails << "\n\n";
   return fails ? 1 : 0;
